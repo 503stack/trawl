@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trawl</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#6b7280; --line:#e3e6eb; --accent:#2563eb; --ok:#15803d; --bad:#b91c1c; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1218; --card:#171b23; --fg:#e6e8ec; --muted:#9aa3b2; --line:#2a303b; --accent:#5b8cff; --ok:#4ade80; --bad:#f87171; --warn:#fbbf24; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 16px; display:flex; align-items:baseline; gap:12px; }
+  h1 small { font-weight: 400; color: var(--muted); font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin: 8px 0 3px; }
+  input, textarea, select { width:100%; padding:7px 9px; border:1px solid var(--line); border-radius:7px; background:var(--bg); color:var(--fg); font:inherit; }
+  textarea { resize: vertical; font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .row { display:grid; grid-template-columns: 2fr 2fr 1fr; gap: 10px; }
+  .row2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items:end; }
+  @media (max-width: 700px) { .row, .row2 { grid-template-columns: 1fr; } }
+  button { font:inherit; padding:7px 14px; border-radius:7px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.small { padding:3px 9px; font-size:12px; }
+  .actions { display:flex; gap:8px; align-items:center; margin-top: 12px; flex-wrap: wrap; }
+  details summary { cursor:pointer; color:var(--muted); margin-top: 10px; font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .err { color: var(--bad); }
+  .toolbar { display:flex; justify-content:space-between; align-items:center; margin: 18px 0 8px; }
+  .job { padding: 11px 14px; }
+  .job .top { display:flex; gap:10px; align-items:center; }
+  .job .name { font-weight: 600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; border:1px solid currentColor; white-space:nowrap; }
+  .s-done { color: var(--ok); } .s-failed { color: var(--bad); } .s-running, .s-verifying { color: var(--accent); }
+  .s-duplicate { color: var(--warn); } .s-queued, .s-canceled { color: var(--muted); }
+  .bar { height: 5px; background: var(--line); border-radius: 3px; margin: 8px 0 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .5s; }
+  .meta { font-size: 12.5px; color: var(--muted); word-break: break-all; }
+  .notes { font-size: 12.5px; margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
+  .bm { font-size: 12.5px; }
+  .bm a { color: var(--accent); }
+  code { font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>trawl <small>parallel downloads for files and HLS streams</small></h1>
+
+  <form class="card" id="form">
+    <label for="urls">URLs: .m3u8 playlists or direct files, one per line</label>
+    <textarea id="urls" rows="3" required placeholder="https://example.com/stream/720p.m3u8"></textarea>
+    <div class="row">
+      <div><label for="page">Page URL (gives title and Referer)</label><input id="page" placeholder="https://example.com/watch/123"></div>
+      <div><label for="name">Name (optional, cleaned up)</label><input id="name" placeholder="taken from the page if empty"></div>
+      <div><label for="folder">Folder</label><select id="folder"></select></div>
+    </div>
+    <details>
+      <summary>Advanced</summary>
+      <label for="headers">Extra headers, one <code>Name: value</code> per line (Cookie, User-Agent, Referer…)</label>
+      <textarea id="headers" rows="3"></textarea>
+      <div class="row2">
+        <div><label for="verify">Check after download</label>
+          <select id="verify"><option value="">default</option><option value="transfer">transfer: sizes and segment count only</option><option value="probe">probe: also ffprobe streams and duration</option><option value="decode">decode: also decode every frame (slow)</option></select></div>
+        <div><label><input type="checkbox" id="upgrade" checked style="width:auto"> look for better quality next to <code>360p.m3u8</code>-style links</label></div>
+      </div>
+    </details>
+    <div class="actions">
+      <button class="primary" type="submit">Download</button>
+      <span id="formmsg" class="muted"></span>
+      <span class="bm" style="margin-left:auto">Bookmarklet: <a id="bm" href="#">trawl this page</a> <span class="muted">(drag it to your bookmarks bar)</span></span>
+    </div>
+  </form>
+
+  <div class="toolbar">
+    <strong>Jobs</strong>
+    <button class="small" id="clear">Clear finished</button>
+  </div>
+  <div id="jobs"></div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const size = n => { if (!(n > 0)) return '0 B'; const u = ['B','KiB','MiB','GiB','TiB']; const i = Math.min(4, Math.floor(Math.log(n) / Math.log(1024))); return (n / 1024 ** i).toFixed(i ? 1 : 0) + ' ' + u[i]; };
+const clock = s => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2,'0')}:${x}` : `${m}:${x}`; };
+
+async function api(method, path, body) {
+  const opt = { method, headers: {} };
+  if (method !== 'GET' && method !== 'DELETE') { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body || {}); }
+  const r = await fetch(path, opt);
+  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  return r.status === 204 ? null : r.json();
+}
+
+// Prefill from bookmarklet / links: ?url=…&page=…&title=…
+const qs = new URLSearchParams(location.search);
+if (qs.get('url')) $('#urls').value = qs.get('url');
+if (qs.get('page')) $('#page').value = qs.get('page');
+if (qs.get('title')) $('#name').value = qs.get('title');
+if (qs.toString()) history.replaceState(null, '', location.pathname);
+$('#bm').href = `javascript:location.href=${JSON.stringify(location.origin + location.pathname + '?page=')}+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title)`;
+
+api('GET', '/api/config').then(c => {
+  $('#folder').innerHTML = c.folders.map(f => `<option>${esc(f.name)}</option>`).join('');
+  $('#verify').options[0].text = `default (${c.verify})`;
+});
+
+$('#form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const urls = $('#urls').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const base = { page_url: $('#page').value.trim(), name: $('#name').value.trim(), folder: $('#folder').value,
+                 headers: $('#headers').value, verify: $('#verify').value, upgrade: $('#upgrade').checked };
+  let ok = 0;
+  try {
+    for (const url of urls) { await api('POST', '/api/jobs', { ...base, url }); ok++; }
+    $('#urls').value = ''; $('#name').value = '';
+    $('#formmsg').className = 'muted'; $('#formmsg').textContent = `queued ${ok}`;
+  } catch (err) { $('#formmsg').className = 'err'; $('#formmsg').textContent = err.message; }
+  refresh();
+});
+
+$('#clear').onclick = () => api('POST', '/api/clear').then(refresh);
+
+$('#jobs').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  const id = b.dataset.id;
+  try {
+    if (b.dataset.act === 'cancel') await api('POST', `/api/jobs/${id}/cancel`);
+    if (b.dataset.act === 'remove') await api('DELETE', `/api/jobs/${id}`);
+    if (b.dataset.act === 'retry') { await api('POST', `/api/jobs/${id}/retry`); }
+    if (b.dataset.act === 'newurl') { const u = prompt('Fresh URL for this job:'); if (u) await api('POST', `/api/jobs/${id}/retry`, { url: u.trim() }); }
+  } catch (err) { alert(err.message); }
+  refresh();
+});
+
+function render(j) {
+  const name = j.output ? j.output.split('/').pop() : (j.name || j.url.split('?')[0].split('/').pop() || j.url);
+  let pct = 0, line = [];
+  if (j.segments > 0) { pct = j.seg_done / j.segments; line.push(`${j.seg_done}/${j.segments} segments`); }
+  else if (j.total > 0) pct = j.bytes / j.total;
+  if (j.state === 'done' || j.state === 'duplicate') pct = 1;
+  if (j.bytes > 0) line.push(size(j.bytes) + (j.total > 0 && !j.segments ? ' / ' + size(j.total) : ''));
+  if (j.state === 'running' && j.speed > 0) line.push(size(j.speed) + '/s');
+  if (j.media) {
+    const m = j.media;
+    line.push([m.height ? `${m.height}p` : '', [m.vcodec, m.acodec].filter(Boolean).join('/'), m.duration ? clock(m.duration) : ''].filter(Boolean).join(' '));
+  }
+  const active = j.state === 'running' || j.state === 'verifying';
+  const btns = [];
+  if (j.state === 'queued' || active) btns.push(`<button class="small" data-act="cancel" data-id="${j.id}">Cancel</button>`);
+  if (j.state === 'failed' || j.state === 'canceled') btns.push(`<button class="small" data-act="retry" data-id="${j.id}">Retry</button>`, `<button class="small" data-act="newurl" data-id="${j.id}">Retry with new URL</button>`);
+  if (!active) btns.push(`<button class="small" data-act="remove" data-id="${j.id}">Remove</button>`);
+  const notes = [...(j.notes || [])];
+  if (j.state === 'duplicate') notes.unshift(`already downloaded as ${j.output}`);
+  if (j.failed_path) notes.push(`file kept for inspection: ${j.failed_path}`);
+  return `<div class="card job">
+    <div class="top"><span class="name" title="${esc(j.url)}">${esc(name)}</span><span class="badge s-${j.state}">${j.state}${j.kind ? ' · ' + j.kind : ''}</span>${btns.join('')}</div>
+    ${active || j.state === 'done' ? `<div class="bar"><div style="width:${(pct * 100).toFixed(1)}%"></div></div>` : ''}
+    <div class="meta">${esc(line.filter(Boolean).join(' · '))}${j.output && j.state === 'done' ? `<br>${esc(j.output)}` : ''}${j.sha256 ? `<br>sha256 ${j.sha256}` : ''}</div>
+    ${j.error ? `<div class="err">${esc(j.error)}</div>` : ''}
+    ${notes.length ? `<ul class="notes">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+  </div>`;
+}
+
+let last = '';
+async function refresh() {
+  try {
+    const jobs = await api('GET', '/api/jobs');
+    const s = JSON.stringify(jobs);
+    if (s !== last) { last = s; $('#jobs').innerHTML = jobs.length ? jobs.map(render).join('') : '<p class="muted">No jobs yet.</p>'; }
+  } catch (err) { $('#jobs').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
