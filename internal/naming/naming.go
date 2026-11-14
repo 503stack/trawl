@@ -5,8 +5,10 @@ package naming
 import (
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -39,6 +41,7 @@ var reserved = map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": tru
 
 // Clean normalizes s into a safe base name (no extension handling).
 func (n *Namer) Clean(s string) string {
+	s = decode(s)
 	if n.Strip != nil {
 		s = n.Strip.ReplaceAllString(s, "")
 	}
@@ -75,6 +78,24 @@ func (n *Namer) Clean(s string) string {
 	s = strings.Trim(s, trim)
 	if reserved[strings.ToUpper(s)] {
 		s += n.Sep
+	}
+	return s
+}
+
+// decode undoes URL percent-encoding ("My%20Clip") and HTML entities
+// ("Tom &amp; Jerry"), including double encoding like "%2520".
+func decode(s string) string {
+	for range 3 {
+		d := html.UnescapeString(s)
+		if strings.Contains(d, "%") {
+			if u, err := url.PathUnescape(d); err == nil {
+				d = u
+			}
+		}
+		if d == s {
+			break
+		}
+		s = d
 	}
 	return s
 }

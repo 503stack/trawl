@@ -115,7 +115,7 @@ $('#form').addEventListener('submit', async e => {
   let ok = 0;
   try {
     for (const url of urls) { await api('POST', '/api/jobs', { ...base, url }); ok++; }
-    $('#urls').value = ''; $('#name').value = '';
+    $('#urls').value = ''; $('#page').value = ''; $('#name').value = '';
     $('#formmsg').className = 'muted'; $('#formmsg').textContent = `queued ${ok}`;
   } catch (err) { $('#formmsg').className = 'err'; $('#formmsg').textContent = err.message; }
   refresh();

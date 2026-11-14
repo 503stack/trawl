@@ -227,6 +227,12 @@ func LooksLikeErrorPage(data []byte) bool {
 	if len(d) == 0 {
 		return false
 	}
+	// Binary data that merely starts with '{' or '<' contains control bytes.
+	for _, c := range d[:min(len(d), 512)] {
+		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' {
+			return false
+		}
+	}
 	if d[0] == '{' {
 		return true
 	}

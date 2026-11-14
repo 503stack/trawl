@@ -16,7 +16,11 @@ func TestClean(t *testing.T) {
 		"Straße <test>|*":              "Strasse_test",
 		"...hidden.":                   "hidden",
 		"CON":                          "CON_",
-		"日本語 title":                    "title",
+		"Some%20Site%20-%20[ab12]%20My%20Clip%20(720)":  "Some_Site-[ab12]_My_Clip_(720)",
+		"Tom &amp; Jerry&#39;s Day":                     "Tom_Jerrys_Day",
+		"double%2520encoded":                            "double_encoded",
+		"100% fun":                                      "100_fun",
+		"日本語 title":                                     "title",
 		"a very long title that goes on and on forever": "a_very_long_title_that_goes_on_and_on_fo",
 	}
 	for in, want := range cases {
