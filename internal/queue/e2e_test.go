@@ -92,6 +92,15 @@ func (e *env) run(t *testing.T, req Request) Job {
 	return Job{}
 }
 
+func (e *env) find(id string) Job {
+	for _, j := range e.m.List() {
+		if j.ID == id {
+			return j
+		}
+	}
+	return Job{}
+}
+
 func TestHLS(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
@@ -132,15 +141,41 @@ func TestHLS(t *testing.T) {
 		t.Errorf("segments %d/%d", j.SegDone, j.Segments)
 	}
 
-	// Same stream again: identical file → duplicate, nothing written.
-	if j2 := e.run(t, req); j2.State != Duplicate || j2.Output != j.Output {
-		t.Errorf("second run: %s %s", j2.State, j2.Output)
+	// Same stream again: identical file → duplicate, held aside.
+	j2 := e.run(t, req)
+	if j2.State != Duplicate || j2.DupOf != j.Output || j2.Held == "" || j2.HeldName != "Sunset_Over_Oresund.mp4" {
+		t.Fatalf("second run: %+v", j2)
+	}
+	// Keep it with the suggested name → _1 suffix; held file is moved.
+	if err := e.m.Keep(j2.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if k := e.find(j2.ID); k.State != Done || filepath.Base(k.Output) != "Sunset_Over_Oresund_1.mp4" || k.Held != "" {
+		t.Errorf("keep: %+v", k)
+	}
+	if _, err := os.Stat(j2.Held); !os.IsNotExist(err) {
+		t.Error("held file still exists")
+	}
+	// Third time, keep under a custom name; removing a held duplicate deletes it.
+	j3 := e.run(t, req)
+	if err := e.m.Keep(j3.ID, "My Copy!"); err != nil {
+		t.Fatal(err)
+	}
+	if k := e.find(j3.ID); filepath.Base(k.Output) != "My_Copy.mp4" {
+		t.Errorf("keep with name: %s", k.Output)
+	}
+	j4 := e.run(t, req)
+	if err := e.m.Remove(j4.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(j4.Held); !os.IsNotExist(err) {
+		t.Error("removed job's held file still exists")
 	}
 
 	// Without the Referer the CDN says 403.
-	j3 := e.run(t, Request{URL: e.srv.URL + "/hls/720p.m3u8"})
-	if j3.State != Failed || !strings.Contains(j3.Error, "403") {
-		t.Errorf("no referer: %s %q", j3.State, j3.Error)
+	nr := e.run(t, Request{URL: e.srv.URL + "/hls/720p.m3u8"})
+	if nr.State != Failed || !strings.Contains(nr.Error, "403") {
+		t.Errorf("no referer: %s %q", nr.State, nr.Error)
 	}
 }
 

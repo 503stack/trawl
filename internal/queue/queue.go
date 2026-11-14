@@ -48,6 +48,7 @@ type Request struct {
 	Headers string `json:"headers,omitempty"` // "Name: value" per line
 	Verify  string `json:"verify,omitempty"`  // overrides TRAWL_VERIFY
 	Upgrade *bool  `json:"upgrade,omitempty"` // look for better HLS quality, default true
+	Dedupe  string `json:"dedupe,omitempty"`  // overrides TRAWL_DEDUPE: skip | keep | off
 }
 
 // Job is a request plus its progress and result.
@@ -68,6 +69,9 @@ type Job struct {
 	Speed    float64     `json:"speed,omitempty"` // bytes/s
 	Output   string      `json:"output,omitempty"`
 	Failed   string      `json:"failed_path,omitempty"`
+	DupOf    string      `json:"duplicate_of,omitempty"` // existing identical file
+	Held     string      `json:"held,omitempty"`         // duplicate kept aside until Keep or removal
+	HeldName string      `json:"held_name,omitempty"`    // name it would have been saved as
 	Size     int64       `json:"size,omitempty"`
 	SHA256   string      `json:"sha256,omitempty"`
 	Media    *media.Info `json:"media,omitempty"`
@@ -164,6 +168,9 @@ func (m *Manager) Add(req Request) (Job, error) {
 	if req.Verify != "" && !config.ValidVerify(req.Verify) {
 		return Job{}, errors.New("verify must be transfer, probe or decode")
 	}
+	if req.Dedupe != "" && req.Dedupe != "skip" && req.Dedupe != "keep" && req.Dedupe != "off" {
+		return Job{}, errors.New("dedupe must be skip, keep or off")
+	}
 	id := make([]byte, 6)
 	rand.Read(id)
 	j := &Job{ID: hex.EncodeToString(id), Request: req, State: Queued, Created: time.Now()}
@@ -231,6 +238,7 @@ func (m *Manager) Retry(id, newURL string) error {
 	if newURL != "" {
 		j.URL = newURL
 	}
+	dropHeld(j)
 	*j = Job{ID: j.ID, Request: j.Request, State: Queued, Created: j.Created}
 	m.saveLocked()
 	m.wakeLocked()
@@ -246,6 +254,7 @@ func (m *Manager) Remove(id string) error {
 			if j.State.active() {
 				return errors.New("cancel the job first")
 			}
+			dropHeld(j)
 			m.jobs = slices.Delete(m.jobs, i, i+1)
 			m.saveLocked()
 			return nil
@@ -259,9 +268,62 @@ func (m *Manager) ClearFinished() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.jobs = slices.DeleteFunc(m.jobs, func(j *Job) bool {
-		return j.State == Done || j.State == Duplicate || j.State == Canceled
+		if j.State == Done || j.State == Duplicate || j.State == Canceled {
+			dropHeld(j)
+			return true
+		}
+		return false
 	})
 	m.saveLocked()
+}
+
+// Keep saves a held duplicate into its folder after all. name (optional)
+// replaces the suggested name; a taken name still gets a _1 suffix.
+func (m *Manager) Keep(id, name string) error {
+	m.mu.Lock()
+	j := m.find(id)
+	if j == nil {
+		m.mu.Unlock()
+		return errNotFound
+	}
+	if j.State != Duplicate || j.Held == "" {
+		m.mu.Unlock()
+		return errors.New("job has no held duplicate to keep")
+	}
+	held := j.Held
+	base, ext := naming.SplitExt(j.HeldName)
+	if name != "" {
+		if b, e := naming.SplitExt(name); e == ext {
+			name = b // "clip.mp4" → "clip"; the extension stays what the file is
+		}
+		if base = m.namer.Clean(name); base == "" {
+			m.mu.Unlock()
+			return errors.New("name is empty after cleaning")
+		}
+	}
+	folder, _ := m.cfg.Folder(j.Folder)
+	j.Held = "" // claim it so a second click cannot move it twice
+	m.mu.Unlock()
+
+	final, err := naming.Place(held, folder.Path, base, ext, m.cfg.NameSeparator)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil {
+		j.Held = held
+		return err
+	}
+	j.State, j.Output, j.HeldName = Done, final, ""
+	j.Notes = append(j.Notes, "kept although identical to "+filepath.Base(j.DupOf))
+	m.saveLocked()
+	return nil
+}
+
+// dropHeld deletes a held duplicate file.
+func dropHeld(j *Job) {
+	if j.Held != "" {
+		os.Remove(j.Held)
+		j.Held, j.HeldName = "", ""
+	}
 }
 
 var errNotFound = errors.New("job not found")

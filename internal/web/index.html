@@ -61,6 +61,8 @@
       <div class="row2">
         <div><label for="verify">Check after download</label>
           <select id="verify"><option value="">default</option><option value="transfer">transfer: sizes and segment count only</option><option value="probe">probe: also ffprobe streams and duration</option><option value="decode">decode: also decode every frame (slow)</option></select></div>
+        <div><label for="dedupe">If an identical file already exists</label>
+          <select id="dedupe"><option value="">default</option><option value="skip">hold it and ask me</option><option value="keep">save it anyway (name_1)</option><option value="off">don't check</option></select></div>
         <div><label><input type="checkbox" id="upgrade" checked style="width:auto"> look for better quality next to <code>360p.m3u8</code>-style links</label></div>
       </div>
     </details>
@@ -102,13 +104,14 @@ $('#bm').href = `javascript:location.href=${JSON.stringify(location.origin + loc
 api('GET', '/api/config').then(c => {
   $('#folder').innerHTML = c.folders.map(f => `<option>${esc(f.name)}</option>`).join('');
   $('#verify').options[0].text = `default (${c.verify})`;
+  $('#dedupe').options[0].text = `default (${c.dedupe})`;
 });
 
 $('#form').addEventListener('submit', async e => {
   e.preventDefault();
   const urls = $('#urls').value.split('\n').map(s => s.trim()).filter(Boolean);
   const base = { page_url: $('#page').value.trim(), name: $('#name').value.trim(), folder: $('#folder').value,
-                 headers: $('#headers').value, verify: $('#verify').value, upgrade: $('#upgrade').checked };
+                 headers: $('#headers').value, verify: $('#verify').value, dedupe: $('#dedupe').value, upgrade: $('#upgrade').checked };
   let ok = 0;
   try {
     for (const url of urls) { await api('POST', '/api/jobs', { ...base, url }); ok++; }
@@ -127,6 +130,10 @@ $('#jobs').addEventListener('click', async e => {
     if (b.dataset.act === 'cancel') await api('POST', `/api/jobs/${id}/cancel`);
     if (b.dataset.act === 'remove') await api('DELETE', `/api/jobs/${id}`);
     if (b.dataset.act === 'retry') { await api('POST', `/api/jobs/${id}/retry`); }
+    if (b.dataset.act === 'keep') {
+      const name = prompt('Save the copy as (a _1 suffix is added if the name is taken):', b.dataset.name);
+      if (name !== null) await api('POST', `/api/jobs/${id}/keep`, { name: name.trim() });
+    }
     if (b.dataset.act === 'newurl') { const u = prompt('Fresh URL for this job:'); if (u) await api('POST', `/api/jobs/${id}/retry`, { url: u.trim() }); }
   } catch (err) { alert(err.message); }
   refresh();
@@ -148,9 +155,10 @@ function render(j) {
   const btns = [];
   if (j.state === 'queued' || active) btns.push(`<button class="small" data-act="cancel" data-id="${j.id}">Cancel</button>`);
   if (j.state === 'failed' || j.state === 'canceled') btns.push(`<button class="small" data-act="retry" data-id="${j.id}">Retry</button>`, `<button class="small" data-act="newurl" data-id="${j.id}">Retry with new URL</button>`);
+  if (j.state === 'duplicate' && j.held) btns.push(`<button class="small" data-act="keep" data-id="${j.id}" data-name="${esc((j.held_name || '').replace(/\.[^.]+$/, ''))}">Keep as copy</button>`);
   if (!active) btns.push(`<button class="small" data-act="remove" data-id="${j.id}">Remove</button>`);
   const notes = [...(j.notes || [])];
-  if (j.state === 'duplicate') notes.unshift(`already downloaded as ${j.output}`);
+  if (j.state === 'duplicate') notes.unshift(`identical to ${j.duplicate_of}` + (j.held ? ' (copy held: Keep as copy saves it, Remove deletes it)' : ''));
   if (j.failed_path) notes.push(`file kept for inspection: ${j.failed_path}`);
   return `<div class="card job">
     <div class="top"><span class="name" title="${esc(j.url)}">${esc(name)}</span><span class="badge s-${j.state}">${j.state}${j.kind ? ' · ' + j.kind : ''}</span>${btns.join('')}</div>

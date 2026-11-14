@@ -86,10 +86,19 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 	folder, _ := m.cfg.Folder(req.Folder)
 	m.update(j, func(j *Job) { j.SHA256, j.Size, j.Media = sum, st.Size(), info })
 
-	if m.cfg.Dedupe != "off" {
+	dedupe := req.Dedupe
+	if dedupe == "" {
+		dedupe = m.cfg.Dedupe
+	}
+	if dedupe != "off" {
 		if dup := findDuplicate(folder.Path, st.Size(), sum); dup != "" {
-			if m.cfg.Dedupe == "skip" {
-				m.update(j, func(j *Job) { j.Output = dup })
+			if dedupe == "skip" {
+				// Hold the file so the user can still keep it without downloading again.
+				held, err := naming.Place(out, filepath.Join(m.cfg.DataDir, "duplicates"), j.ID+m.cfg.NameSeparator+base, ext, m.cfg.NameSeparator)
+				if err != nil {
+					return err
+				}
+				m.update(j, func(j *Job) { j.DupOf, j.Held, j.HeldName = dup, held, base+ext })
 				return errDuplicate
 			}
 			m.note(j, "identical to %s", filepath.Base(dup))
@@ -376,7 +385,7 @@ func (m *Manager) sendNotify(j Job) {
 			msg += fmt.Sprintf(", %dp, %s", j.Media.Height, media.Clock(j.Media.Duration))
 		}
 	case Duplicate:
-		title, msg = "trawl: duplicate", fmt.Sprintf("already have %s", name)
+		title, msg = "trawl: duplicate", fmt.Sprintf("already have %s (open trawl to keep a copy anyway)", filepath.Base(j.DupOf))
 	default:
 		title, msg = "trawl: failed", fmt.Sprintf("%s: %s", j.URL, j.Error)
 	}

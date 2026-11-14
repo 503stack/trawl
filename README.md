@@ -19,7 +19,7 @@ It runs as one Go binary plus ffmpeg, with a single-page web UI, and needs no da
   - ffprobe checks the streams, and the duration must match the playlist.
   - An optional full decode checks every frame.
   - Files that fail are kept in `DATA/failed/` for inspection.
-- **Duplicate detection.** A sha256 is computed for every file. A file identical to one already in the folder is skipped.
+- **Duplicate detection.** A sha256 is computed for every file. A file identical to one already in the folder is held aside instead of saved. **Keep as copy** saves it under a new name instantly, with no re-download, and **Remove** deletes it.
 - **Optional.** Notifications to Discord or ntfy, and a basic-auth password.
 
 ## Run
@@ -47,7 +47,8 @@ curl -X POST localhost:8080/api/jobs -H 'Content-Type: application/json' -d '{
   "folder": "downloads",
   "headers": "Cookie: a=b\nUser-Agent: ...",
   "verify": "probe",
-  "upgrade": true
+  "upgrade": true,
+  "dedupe": "skip"
 }'
 ```
 
@@ -55,6 +56,7 @@ curl -X POST localhost:8080/api/jobs -H 'Content-Type: application/json' -d '{
 |---|---|
 | `GET /api/jobs` | all jobs, newest first, with live progress |
 | `POST /api/jobs/{id}/cancel` | cancel a queued or running job |
+| `POST /api/jobs/{id}/keep` | body `{"name": "..."}` (optional): save a held duplicate anyway |
 | `POST /api/jobs/{id}/retry` | body `{"url": "..."}` (optional) to retry with a fresh link |
 | `DELETE /api/jobs/{id}` | remove from the list (the file stays) |
 | `POST /api/clear` | remove finished jobs |
@@ -69,7 +71,7 @@ All settings are environment variables.
 | Variable | Default | |
 |---|---|---|
 | `TRAWL_LISTEN` | `:8080` | |
-| `TRAWL_DATA` | `/data` | `jobs.json`, `tmp/`, `failed/` |
+| `TRAWL_DATA` | `/data` | `jobs.json`, `tmp/`, `failed/`, `duplicates/` |
 | `TRAWL_TEMP` | `$TRAWL_DATA/tmp` | Work area. Put it on the same filesystem as the folders to make the final move a hard link instead of a copy. |
 | `TRAWL_FOLDERS` | `downloads:/downloads` | `name:/path;name2:/path2`. The first one is the default. |
 | `TRAWL_PASSWORD` | | Enables HTTP basic auth (any user name). |
@@ -90,7 +92,7 @@ All settings are environment variables.
 | `TRAWL_VERIFY_DURATION_TOLERANCE` | `1%` | Allowed difference from the playlist duration (at least 2 s). |
 | `TRAWL_VERIFY_MIN_SIZE` | `1MiB` | Smaller media files fail. |
 | `TRAWL_VERIFY_REQUIRE_AUDIO` | `true` | Video without audio fails. |
-| `TRAWL_DEDUPE` | `skip` | `skip` identical files, `keep` them (with a note), or `off`. |
+| `TRAWL_DEDUPE` | `skip` | `skip`: hold identical files in `DATA/duplicates/` until you keep or remove them. `keep`: save them as `name_1` with a note. `off`: don't check. Can be overridden per job. Held files use disk space until the job is removed or cleared. |
 
 ## How a job runs
 

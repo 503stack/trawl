@@ -24,7 +24,7 @@ func Handler(m *queue.Manager, cfg *config.Config) http.Handler {
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"folders": cfg.Folders, "verify": cfg.VerifyLevel})
+		writeJSON(w, http.StatusOK, map[string]any{"folders": cfg.Folders, "verify": cfg.VerifyLevel, "dedupe": cfg.Dedupe})
 	})
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, m.List())
@@ -52,6 +52,14 @@ func Handler(m *queue.Manager, cfg *config.Config) http.Handler {
 		}
 		if readJSON(w, r, &body) {
 			reply(w, m.Retry(r.PathValue("id"), body.URL))
+		}
+	})
+	mux.HandleFunc("POST /api/jobs/{id}/keep", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if readJSON(w, r, &body) {
+			reply(w, m.Keep(r.PathValue("id"), body.Name))
 		}
 	})
 	mux.HandleFunc("DELETE /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
