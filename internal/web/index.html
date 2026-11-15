@@ -103,24 +103,30 @@ let cands = { page: qs.get('page') || '', urls: qs.getAll('cand') };
 if (cands.urls.length) $('#formmsg').textContent = `the page loaded ${cands.urls.length} video link(s); press Download to pick the best`;
 if (qs.toString()) history.replaceState(null, '', location.pathname);
 
-// The bookmarklet runs on the video page. It collects the playlists and files
-// the player loaded (performance entries) and the <video> sources, so URLs
-// built in JavaScript are found too, then opens trawl with them in a new tab
-// (or in this one if pop-ups are blocked), so the video page stays open.
+// The bookmarklet runs on the video page. It sends the source of every visible
+// or playing <video> element (whatever its extension, e.g. a site's ".vid"),
+// then the playlists and files the page loaded (performance entries), so URLs
+// built in JavaScript are found too. It opens trawl with them in a new tab (or
+// in this one if pop-ups are blocked), so the video page stays open.
 function bookmarklet(target) {
-  const media = /\.(m3u8|mp4|m4v|webm|mov|mkv)$/i, lists = [], files = [];
-  const add = s => {
+  const media = /\.(m3u8|mp4|m4v|webm|mov|mkv|vid)$/i, vids = [], lists = [], files = [];
+  const add = (s, any) => {
     try {
       const u = new URL(s, location.href);
-      if (!/^https?:$/.test(u.protocol) || !media.test(u.pathname)) return;
-      const to = /\.m3u8$/i.test(u.pathname) ? lists : files;
-      if (!to.includes(u.href)) to.push(u.href);
+      if (!/^https?:$/.test(u.protocol) || !(any || media.test(u.pathname))) return;
+      const to = any ? vids : /\.m3u8$/i.test(u.pathname) ? lists : files;
+      if (!vids.includes(u.href) && !to.includes(u.href)) to.push(u.href);
     } catch (e) {}
   };
-  performance.getEntriesByType('resource').forEach(e => add(e.name));
-  document.querySelectorAll('video, video source').forEach(v => { add(v.currentSrc || ''); add(v.src || ''); });
+  // Playing videos first, then the largest on screen; hidden ones (hover previews) are skipped.
+  [...document.querySelectorAll('video')]
+    .map(v => ({ v, playing: !v.paused || v.currentTime > 0, area: v.offsetWidth * v.offsetHeight }))
+    .filter(x => x.playing || x.area > 0)
+    .sort((a, b) => (b.playing - a.playing) || (b.area - a.area))
+    .forEach(({ v }) => { add(v.currentSrc || '', true); add(v.src || '', true); v.querySelectorAll('source').forEach(s => add(s.src, true)); });
+  performance.getEntriesByType('resource').forEach(e => add(e.name, false));
   let q = '?page=' + encodeURIComponent(location.href) + '&title=' + encodeURIComponent(document.title);
-  lists.concat(files).slice(0, 20).forEach(u => q += '&cand=' + encodeURIComponent(u));
+  vids.concat(lists, files).slice(0, 20).forEach(u => q += '&cand=' + encodeURIComponent(u));
   const w = window.open(target + q, '_blank');
   if (!w) location.href = target + q;
 }

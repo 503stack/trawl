@@ -64,7 +64,7 @@ func Find(data []byte, base *url.URL) []string {
 			raw = append(raw, m[1])
 		}
 	}
-	return Clean(raw, base)
+	return Clean(raw, base, false)
 }
 
 // Iframes returns the http(s) iframe sources in a page, resolved against base.
@@ -81,8 +81,10 @@ func Iframes(data []byte, base *url.URL) []string {
 }
 
 // Clean resolves URLs against base and keeps unique http(s) URLs whose path
-// ends in a video or playlist extension.
-func Clean(raw []string, base *url.URL) []string {
+// ends in a video or playlist extension. With anyExt, the extension is not
+// checked: for URLs the browser played in a <video> element, such as a site's
+// own ".vid" or an extensionless stream URL.
+func Clean(raw []string, base *url.URL, anyExt bool) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, r := range raw {
@@ -91,7 +93,7 @@ func Clean(raw []string, base *url.URL) []string {
 			continue
 		}
 		seen[u] = true
-		if kind(u) > 0 {
+		if anyExt || kind(u) > 0 {
 			out = append(out, u)
 		}
 	}
@@ -100,7 +102,8 @@ func Clean(raw []string, base *url.URL) []string {
 
 // Best orders candidates best first. HLS playlists beat files (trawl then
 // picks the best variant itself); files are ranked by the resolution in their
-// URL. Previews, trailers, thumbnails and ads go last. Ties keep their order.
+// URL. Previews, trailers, thumbnails and ads go last. Ties keep their order,
+// so put the most trusted candidates first.
 func Best(cands []string) []string {
 	out := append([]string(nil), cands...)
 	sort.SliceStable(out, func(a, b int) bool { return score(out[a]) > score(out[b]) })
@@ -116,17 +119,24 @@ func score(u string) int {
 		if strings.Contains(strings.ToLower(path.Base(p.Path)), "master") {
 			s += 300 // more than any resolution hint
 		}
-	case 1:
+	default: // a file; unknown extensions only come from the browser
 		s = 500
 	}
 	if m := heightRe.FindStringSubmatch(p.Path); m != nil {
 		h, _ := strconv.Atoi(m[1])
 		s += h / 10
 	}
-	if extraRe.MatchString(p.Path) {
+	if IsExtra(u) {
 		s -= 800
 	}
 	return s
+}
+
+// IsExtra reports whether a URL looks like a preview, trailer, thumbnail or
+// ad rather than the video itself. Such URLs are never picked automatically.
+func IsExtra(u string) bool {
+	p, err := url.Parse(u)
+	return err == nil && extraRe.MatchString(p.Path)
 }
 
 // kind is 2 for an HLS playlist, 1 for a video file, 0 otherwise.
@@ -138,7 +148,7 @@ func kind(u string) int {
 	switch strings.ToLower(path.Ext(p.Path)) {
 	case ".m3u8":
 		return 2
-	case ".mp4", ".m4v", ".webm", ".mov", ".mkv":
+	case ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".vid":
 		return 1
 	}
 	return 0

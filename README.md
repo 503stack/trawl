@@ -8,7 +8,7 @@ It runs as one Go binary plus ffmpeg, with a single-page web UI, and needs no da
   - From a master playlist, trawl picks the best variant and adds its separate audio track.
   - Handles AES-128 encryption, fMP4 (`#EXT-X-MAP`) and byte-range playlists.
   - Given a quality-named link like `360p.m3u8`, it looks for a better sibling (`master.m3u8`, `1080p.m3u8`, …).
-- **Finds the video on a page.** Give only a page URL, or paste a page link as the URL, and trawl looks for `.m3u8` playlists and video files in it: `og:video`, `<video>`/`<source>`, JSON-LD and URLs inside scripts, then up to three embedded-player iframes. It picks a playlist over a file, prefers the highest resolution in the URL, and skips previews, trailers and ads. The other candidates are listed in the job notes.
+- **Finds the video on a page.** Give only a page URL, or paste a page link as the URL, and trawl looks for `.m3u8` playlists and video files in it: `og:video`, `<video>`/`<source>`, JSON-LD and URLs inside scripts, then up to three embedded-player iframes. It picks a playlist over a file, prefers the highest resolution in the URL, and never picks previews, trailers or ads. The other candidates are listed in the job notes.
 - **Per-job headers.** A page URL becomes the `Referer` and `Origin` headers. You can add any other headers (Cookie, User-Agent, …).
 - **File names.**
   - The name comes from, in order: the name you typed, the page title (`og:title` / `<title>`), `Content-Disposition`, or the URL. Meaningless names like `360p`, `index` or random tokens are skipped.
@@ -36,7 +36,7 @@ The container runs as uid/gid 1000, so the mounted folders must be writable by t
 
 Open http://localhost:8080. Paste one or more URLs, optionally with the page they came from, and press Download.
 
-Use the **bookmarklet** link in the UI on a video page, preferably once the video is playing. It opens trawl in a new tab with the page URL and title filled in, together with the playlists and video files the browser has loaded. Press Download with the URL field empty and trawl picks the best one. This also finds streams that the player builds in JavaScript, which a scan of the HTML would miss.
+Use the **bookmarklet** link in the UI on a video page, preferably once the video is playing. It opens trawl in a new tab with the page URL and title filled in, together with the source of the playing `<video>` (any extension, e.g. `.vid`) and the playlists and video files the browser has loaded. Press Download with the URL field empty and trawl picks the best one. This also finds streams that the player builds in JavaScript, which a scan of the HTML would miss.
 
 ### API
 

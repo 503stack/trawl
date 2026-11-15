@@ -74,3 +74,16 @@ func TestBest(t *testing.T) {
 		t.Errorf("Best:\n got %q\nwant %q", got, want)
 	}
 }
+
+func TestCleanAnyExt(t *testing.T) {
+	raw := []string{"https://c.example/cdn/x.vid", "https://c.example/stream?id=1", "blob:https://c.example/1", "/rel.vid"}
+	if got := Clean(raw, nil, false); !slices.Equal(got, []string{"https://c.example/cdn/x.vid"}) {
+		t.Errorf("Clean = %q", got)
+	}
+	if got := Clean(raw, nil, true); !slices.Equal(got, raw[:2]) {
+		t.Errorf("Clean any = %q", got)
+	}
+	if !IsExtra("https://c.example/p/vidthumb.mp4") || IsExtra("https://c.example/cdn/x.vid") {
+		t.Error("IsExtra")
+	}
+}

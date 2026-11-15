@@ -420,7 +420,7 @@ func (m *Manager) pick(ctx context.Context, j *Job, browser []string, pg *webPag
 			list = append(list, cand{u, ref})
 		}
 	}
-	add(page.Clean(browser, nil), "")
+	add(page.Clean(browser, nil, true), "")
 	if pg != nil {
 		add(page.Find(pg.data, pg.url), "")
 		if len(list) == 0 {
@@ -450,6 +450,9 @@ func (m *Manager) pick(ctx context.Context, j *Job, browser []string, pg *webPag
 		}
 	}
 	urls = page.Best(urls)
+	if page.IsExtra(urls[0]) {
+		return "", "", fmt.Errorf("only previews, trailers or ads found on the page (%s); press play and use the bookmarklet, or paste the video link", strings.Join(urls[:min(len(urls), 3)], " "))
+	}
 	m.update(j, func(j *Job) { j.Found = urls[0] })
 	m.note(j, "found on page: %s", urls[0])
 	if n := len(urls) - 1; n > 0 {

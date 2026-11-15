@@ -250,6 +250,10 @@ func TestPageExtraction(t *testing.T) {
 	mux.Handle("/outer", page(`<title>Outer</title></head><body><iframe src="/embed/1"></iframe>`))
 	mux.Handle("/embed/1", page(`</head><body><video src="files/movie.mp4"></video>`))
 	mux.Handle("/empty", page(`<title>Nothing here</title></head><body>`))
+	// Like sites whose player sets src from script: only hover previews in the HTML.
+	mux.Handle("/previews", page(`<title>Previews</title></head><body><video id="player" src=""></video>
+<video class="hover" src="/p/1/vidthumb.mp4"></video>`))
+	mux.Handle("/cdn/abc.vid", file("/previews"))
 	e := setup(t, mux)
 	srvURL = e.srv.URL
 	base := Request{Verify: "transfer", Dedupe: "off"}
@@ -284,9 +288,22 @@ func TestPageExtraction(t *testing.T) {
 	req.Candidates = []string{srvURL + "/files/movie.mp4", "blob:" + srvURL + "/x"}
 	check("candidates", req, "from_browser.mp4", srvURL+"/files/movie.mp4")
 
+	// The bookmarklet sends the playing <video>'s source whatever its extension.
+	req = base
+	req.PageURL = srvURL + "/previews"
+	req.Candidates = []string{srvURL + "/cdn/abc.vid", srvURL + "/p/1/vidthumb.mp4"}
+	check("site .vid", req, "Previews.vid", srvURL+"/cdn/abc.vid")
+
+	req = base
+	req.PageURL = srvURL + "/previews"
+	j := e.run(t, req)
+	if j.State != Failed || !strings.Contains(j.Error, "only previews") {
+		t.Errorf("previews: %s %q", j.State, j.Error)
+	}
+
 	req = base
 	req.PageURL = srvURL + "/empty"
-	j := e.run(t, req)
+	j = e.run(t, req)
 	if j.State != Failed || !strings.Contains(j.Error, "no video") {
 		t.Errorf("empty: %s %q", j.State, j.Error)
 	}
