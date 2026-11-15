@@ -33,6 +33,7 @@ type Config struct {
 	Retries        int
 	UserAgent      string
 	HTTP2          bool
+	IP             string // auto | 4 | 6 (IPv6 first, then IPv4)
 
 	NameSeparator string
 	NameASCII     bool
@@ -62,6 +63,7 @@ func Defaults() *Config {
 		ChunkSize:         8 << 20,
 		Retries:           5,
 		UserAgent:         DefaultUserAgent,
+		IP:                "auto",
 		NameSeparator:     "_",
 		NameASCII:         true,
 		NameMaxBytes:      200,
@@ -95,6 +97,7 @@ func Load() (*Config, error) {
 	c.Retries = p.int("TRAWL_RETRIES", c.Retries)
 	c.UserAgent = p.str("TRAWL_USER_AGENT", c.UserAgent)
 	c.HTTP2 = p.bool("TRAWL_HTTP2", c.HTTP2)
+	c.IP = p.str("TRAWL_IP", c.IP)
 
 	c.NameSeparator = p.str("TRAWL_NAME_SEPARATOR", c.NameSeparator)
 	c.NameASCII = p.bool("TRAWL_NAME_ASCII", c.NameASCII)
@@ -116,6 +119,11 @@ func Load() (*Config, error) {
 
 	if !ValidVerify(c.VerifyLevel) {
 		p.check("TRAWL_VERIFY", errors.New("must be transfer, probe or decode"))
+	}
+	switch c.IP {
+	case "auto", "4", "6":
+	default:
+		p.check("TRAWL_IP", errors.New("must be auto, 4 or 6"))
 	}
 	switch c.Dedupe {
 	case "skip", "keep", "off":

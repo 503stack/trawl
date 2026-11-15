@@ -51,10 +51,10 @@ type Client struct {
 // New creates a client allowing at most maxConns concurrent requests.
 // HTTP/2 is off by default: many TCP connections fill a fast line better
 // than streams multiplexed over one connection.
-func New(maxConns, retries int, ua string, http2 bool) *Client {
+func New(maxConns, retries int, ua string, http2 bool, ip string) *Client {
 	t := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           dialer(ip),
 		ForceAttemptHTTP2:     http2,
 		MaxIdleConns:          maxConns * 2,
 		MaxIdleConnsPerHost:   maxConns,
@@ -73,6 +73,28 @@ func New(maxConns, retries int, ua string, http2 bool) *Client {
 		StallTimeout: 30 * time.Second,
 		conns:        make(chan struct{}, maxConns),
 	}
+}
+
+// dialer returns the transport's dial function for an address family:
+// "4" uses IPv4 only; "6" tries IPv6 first and falls back to IPv4, for sites
+// that bind links to the browser's IPv6 address when the host would otherwise
+// prefer IPv4 (e.g. a container with only a ULA IPv6 address behind NAT66);
+// anything else leaves the choice to the system.
+func dialer(ip string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	switch ip {
+	case "4":
+		return func(ctx context.Context, _, addr string) (net.Conn, error) { return d.DialContext(ctx, "tcp4", addr) }
+	case "6":
+		d6 := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+		return func(ctx context.Context, _, addr string) (net.Conn, error) {
+			if c, err := d6.DialContext(ctx, "tcp6", addr); err == nil || ctx.Err() != nil {
+				return c, err
+			}
+			return d.DialContext(ctx, "tcp4", addr)
+		}
+	}
+	return d.DialContext
 }
 
 // Acquire takes one slot of the global connection limit.

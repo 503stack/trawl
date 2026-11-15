@@ -61,7 +61,7 @@ func setup(t *testing.T, mux *http.ServeMux) *env {
 	cfg.MinSize = 1000
 	cfg.NameStrip = regexp.MustCompile(`\s*[-–]\s*TestSite$`)
 	os.MkdirAll(cfg.TempDir, 0o755)
-	client := fetch.New(cfg.MaxConnections, 2, cfg.UserAgent, false)
+	client := fetch.New(cfg.MaxConnections, 2, cfg.UserAgent, false, "auto")
 	m, err := New(cfg, client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)

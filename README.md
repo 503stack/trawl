@@ -86,6 +86,7 @@ All settings are environment variables.
 | `TRAWL_RETRIES` | `5` | Per segment or range. A 4xx is retried only once. |
 | `TRAWL_USER_AGENT` | recent Chrome | |
 | `TRAWL_HTTP2` | `false` | Many HTTP/1.1 connections usually beat one multiplexed HTTP/2 connection. |
+| `TRAWL_IP` | `auto` | `6` tries IPv6 first, then IPv4; `4` uses IPv4 only. Use `6` when a site binds links to the browser's IPv6 address and trawl would otherwise go out over IPv4, e.g. in a container whose only IPv6 address is a ULA behind NAT66. |
 | `TRAWL_NAME_SEPARATOR` | `_` | `_`, `-` or `.` |
 | `TRAWL_NAME_ASCII` | `true` | Fold accents (`é→e`, `ø→o`, `ß→ss`) and drop other non-ASCII characters. |
 | `TRAWL_NAME_MAX_BYTES` | `200` | |

@@ -50,7 +50,7 @@ func run(log *slog.Logger) error {
 		}
 	}
 
-	client := fetch.New(cfg.MaxConnections, cfg.Retries, cfg.UserAgent, cfg.HTTP2)
+	client := fetch.New(cfg.MaxConnections, cfg.Retries, cfg.UserAgent, cfg.HTTP2, cfg.IP)
 	m, err := queue.New(cfg, client, log)
 	if err != nil {
 		return err
