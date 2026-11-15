@@ -221,3 +221,77 @@ func TestHTTPRanges(t *testing.T) {
 		t.Errorf("expired: %s %q failed_path=%q", j.State, j.Error, j.Failed)
 	}
 }
+
+func TestPageExtraction(t *testing.T) {
+	video := make([]byte, 300<<10)
+	rand.Read(video)
+	mux := http.NewServeMux()
+	var srvURL string
+	// The file only serves with the Referer of the page it was found on.
+	file := func(ref string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Referer") != srvURL+ref {
+				http.Error(w, "bad referer "+r.Header.Get("Referer"), http.StatusForbidden)
+				return
+			}
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(video))
+		}
+	}
+	page := func(body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			io.WriteString(w, "<!doctype html><html><head>"+body+"</html>")
+		}
+	}
+	mux.Handle("/files/movie.mp4", file("/watch"))
+	mux.Handle("/embed/files/movie.mp4", file("/embed/1"))
+	mux.Handle("/watch", page(`<title>My Clip - TestSite</title></head><body>
+<script>var cfg = {"poster":"\/img\/p.jpg","file":"\/files\/movie.mp4","trailer":"\/files\/trailer.mp4"}</script>`))
+	mux.Handle("/outer", page(`<title>Outer</title></head><body><iframe src="/embed/1"></iframe>`))
+	mux.Handle("/embed/1", page(`</head><body><video src="files/movie.mp4"></video>`))
+	mux.Handle("/empty", page(`<title>Nothing here</title></head><body>`))
+	e := setup(t, mux)
+	srvURL = e.srv.URL
+	base := Request{Verify: "transfer", Dedupe: "off"}
+
+	check := func(name string, req Request, wantFile, wantFound string) {
+		t.Helper()
+		j := e.run(t, req)
+		if j.State != Done || filepath.Base(j.Output) != wantFile || j.Found != wantFound {
+			t.Fatalf("%s: %s output=%q found=%q err=%q notes=%q", name, j.State, j.Output, j.Found, j.Error, j.Notes)
+		}
+		if got, _ := os.ReadFile(j.Output); !bytes.Equal(got, video) {
+			t.Errorf("%s: content differs", name)
+		}
+	}
+
+	req := base
+	req.PageURL = srvURL + "/watch"
+	check("page only", req, "My_Clip.mp4", srvURL+"/files/movie.mp4")
+
+	req = base
+	req.URL = srvURL + "/watch"
+	check("url is a page", req, "My_Clip_1.mp4", srvURL+"/files/movie.mp4")
+
+	req = base
+	req.PageURL = srvURL + "/outer"
+	check("iframe", req, "Outer.mp4", srvURL+"/embed/files/movie.mp4")
+
+	// Bookmarklet: the page has nothing, the browser saw the file load.
+	req = base
+	req.PageURL = srvURL + "/watch"
+	req.Name = "from browser"
+	req.Candidates = []string{srvURL + "/files/movie.mp4", "blob:" + srvURL + "/x"}
+	check("candidates", req, "from_browser.mp4", srvURL+"/files/movie.mp4")
+
+	req = base
+	req.PageURL = srvURL + "/empty"
+	j := e.run(t, req)
+	if j.State != Failed || !strings.Contains(j.Error, "no video") {
+		t.Errorf("empty: %s %q", j.State, j.Error)
+	}
+
+	if _, err := e.m.Add(Request{}); err == nil {
+		t.Error("empty request accepted")
+	}
+}

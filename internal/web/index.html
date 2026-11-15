@@ -47,10 +47,10 @@
   <h1>trawl <small>parallel downloads for files and HLS streams</small></h1>
 
   <form class="card" id="form">
-    <label for="urls">URLs: .m3u8 playlists or direct files, one per line</label>
-    <textarea id="urls" rows="3" required placeholder="https://example.com/stream/720p.m3u8"></textarea>
+    <label for="urls">URLs: .m3u8 playlists or direct files, one per line. Leave empty to find the video on the page URL.</label>
+    <textarea id="urls" rows="3" placeholder="https://example.com/stream/720p.m3u8"></textarea>
     <div class="row">
-      <div><label for="page">Page URL (gives title and Referer)</label><input id="page" placeholder="https://example.com/watch/123"></div>
+      <div><label for="page">Page URL (gives title, Referer and the video if no URL)</label><input id="page" placeholder="https://example.com/watch/123"></div>
       <div><label for="name">Name (optional, cleaned up)</label><input id="name" placeholder="taken from the page if empty"></div>
       <div><label for="folder">Folder</label><select id="folder"></select></div>
     </div>
@@ -93,13 +93,36 @@ async function api(method, path, body) {
   return r.status === 204 ? null : r.json();
 }
 
-// Prefill from bookmarklet / links: ?url=…&page=…&title=…
+// Prefill from bookmarklet / links: ?url=…&page=…&title=…&cand=…
 const qs = new URLSearchParams(location.search);
 if (qs.get('url')) $('#urls').value = qs.get('url');
 if (qs.get('page')) $('#page').value = qs.get('page');
 if (qs.get('title')) $('#name').value = qs.get('title');
+// Video and playlist URLs the browser loaded on the page; sent with a job that has no URL.
+let cands = { page: qs.get('page') || '', urls: qs.getAll('cand') };
+if (cands.urls.length) $('#formmsg').textContent = `the page loaded ${cands.urls.length} video link(s); press Download to pick the best`;
 if (qs.toString()) history.replaceState(null, '', location.pathname);
-$('#bm').href = `javascript:location.href=${JSON.stringify(location.origin + location.pathname + '?page=')}+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title)`;
+
+// The bookmarklet runs on the video page. It collects the playlists and files
+// the player loaded (performance entries) and the <video> sources, so URLs
+// built in JavaScript are found too, then opens trawl with them.
+function bookmarklet(target) {
+  const media = /\.(m3u8|mp4|m4v|webm|mov|mkv)$/i, lists = [], files = [];
+  const add = s => {
+    try {
+      const u = new URL(s, location.href);
+      if (!/^https?:$/.test(u.protocol) || !media.test(u.pathname)) return;
+      const to = /\.m3u8$/i.test(u.pathname) ? lists : files;
+      if (!to.includes(u.href)) to.push(u.href);
+    } catch (e) {}
+  };
+  performance.getEntriesByType('resource').forEach(e => add(e.name));
+  document.querySelectorAll('video, video source').forEach(v => { add(v.currentSrc || ''); add(v.src || ''); });
+  let q = '?page=' + encodeURIComponent(location.href) + '&title=' + encodeURIComponent(document.title);
+  lists.concat(files).slice(0, 20).forEach(u => q += '&cand=' + encodeURIComponent(u));
+  location.href = target + q;
+}
+$('#bm').href = 'javascript:' + encodeURIComponent(`(${bookmarklet})(${JSON.stringify(location.origin + location.pathname)})`);
 
 api('GET', '/api/config').then(c => {
   $('#folder').innerHTML = c.folders.map(f => `<option>${esc(f.name)}</option>`).join('');
@@ -114,8 +137,14 @@ $('#form').addEventListener('submit', async e => {
                  headers: $('#headers').value, verify: $('#verify').value, dedupe: $('#dedupe').value, upgrade: $('#upgrade').checked };
   let ok = 0;
   try {
+    if (!urls.length) {
+      if (!base.page_url) throw new Error('paste a URL, or a page URL to find the video on');
+      urls.push('');
+      if (cands.page === base.page_url) base.candidates = cands.urls;
+    }
     for (const url of urls) { await api('POST', '/api/jobs', { ...base, url }); ok++; }
     $('#urls').value = ''; $('#page').value = ''; $('#name').value = '';
+    cands = { page: '', urls: [] };
     $('#formmsg').className = 'muted'; $('#formmsg').textContent = `queued ${ok}`;
   } catch (err) { $('#formmsg').className = 'err'; $('#formmsg').textContent = err.message; }
   refresh();
@@ -140,7 +169,8 @@ $('#jobs').addEventListener('click', async e => {
 });
 
 function render(j) {
-  const name = j.output ? j.output.split('/').pop() : (j.name || j.url.split('?')[0].split('/').pop() || j.url);
+  const src = j.found_url || j.url || j.page_url;
+  const name = j.output ? j.output.split('/').pop() : (j.name || src.split('?')[0].split('/').pop() || src);
   let pct = 0, line = [];
   if (j.segments > 0) { pct = j.seg_done / j.segments; line.push(`${j.seg_done}/${j.segments} segments`); }
   else if (j.total > 0) pct = j.bytes / j.total;
@@ -161,7 +191,7 @@ function render(j) {
   if (j.state === 'duplicate') notes.unshift(`identical to ${j.duplicate_of}` + (j.held ? ' (copy held: Keep as copy saves it, Remove deletes it)' : ''));
   if (j.failed_path) notes.push(`file kept for inspection: ${j.failed_path}`);
   return `<div class="card job">
-    <div class="top"><span class="name" title="${esc(j.url)}">${esc(name)}</span><span class="badge s-${j.state}">${j.state}${j.kind ? ' · ' + j.kind : ''}</span>${btns.join('')}</div>
+    <div class="top"><span class="name" title="${esc(src)}">${esc(name)}</span><span class="badge s-${j.state}">${j.state}${j.kind ? ' · ' + j.kind : ''}</span>${btns.join('')}</div>
     ${active || j.state === 'done' ? `<div class="bar"><div style="width:${(pct * 100).toFixed(1)}%"></div></div>` : ''}
     <div class="meta">${esc(line.filter(Boolean).join(' · '))}${j.output && j.state === 'done' ? `<br>${esc(j.output)}` : ''}${j.sha256 ? `<br>sha256 ${j.sha256}` : ''}</div>
     ${j.error ? `<div class="err">${esc(j.error)}</div>` : ''}

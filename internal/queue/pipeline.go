@@ -1,17 +1,17 @@
 package queue
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"html"
+	"io"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +20,7 @@ import (
 	"github.com/503stack/trawl/internal/media"
 	"github.com/503stack/trawl/internal/naming"
 	"github.com/503stack/trawl/internal/notify"
+	"github.com/503stack/trawl/internal/page"
 )
 
 var errDuplicate = errors.New("duplicate")
@@ -30,6 +31,7 @@ type download struct {
 	isHLS    bool
 	names    []string // filename candidates: Content-Disposition, URL path
 	ctype    string
+	final    *url.URL // plain files: URL after redirects
 	expected media.Expect
 }
 
@@ -46,17 +48,48 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 
 	hdr := buildHeader(req)
 	var title string
-	if req.Name == "" && req.PageURL != "" {
-		t, err := pageTitle(ctx, m, req.PageURL, hdr)
+	var pg *webPage
+	if req.PageURL != "" && (req.Name == "" || req.URL == "") {
+		p, err := m.fetchPage(ctx, req.PageURL, hdr)
 		if err != nil {
-			m.note(j, "could not read page title: %v", err)
+			m.note(j, "could not read page: %v", err)
+		} else {
+			pg = p
+			title = page.Title(p.data)
 		}
-		title = t
 	}
 
-	dl, err := m.transfer(ctx, j, r, work, hdr)
+	src := req.URL
+	if src == "" {
+		u, ref, err := m.pick(ctx, j, req.Candidates, pg, hdr)
+		if err != nil {
+			return err
+		}
+		src, hdr = u, withReferer(req, hdr, ref)
+	}
+	dl, err := m.transfer(ctx, j, r, work, hdr, src)
 	if err != nil {
 		return err
+	}
+	// The link was a web page rather than a file: look for the video in it.
+	if dl.ctype == "text/html" && req.URL != "" && !looksLikeMedia(req.URL) {
+		if p, err := readPage(dl); err == nil {
+			if title == "" {
+				title = page.Title(p.data)
+			}
+			if u, ref, err := m.pick(ctx, j, nil, p, hdr); err == nil {
+				os.Remove(dl.path)
+				r.bytes.Store(0)
+				r.total.Store(0)
+				h := hdr
+				if req.PageURL == "" {
+					h = withReferer(req, hdr, req.URL)
+				}
+				if dl, err = m.transfer(ctx, j, r, work, withReferer(req, h, ref), u); err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	m.update(j, func(j *Job) { j.State = Verifying })
@@ -113,15 +146,14 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 }
 
 // transfer downloads the URL as HLS or as a plain file.
-func (m *Manager) transfer(ctx context.Context, j *Job, r *run, work string, hdr http.Header) (*download, error) {
-	req := j.Request
-	u, _ := url.Parse(req.URL)
+func (m *Manager) transfer(ctx context.Context, j *Job, r *run, work string, hdr http.Header, src string) (*download, error) {
+	u, _ := url.Parse(src)
 	p := strings.ToLower(u.Path)
 	if !strings.HasSuffix(p, ".m3u8") && !strings.HasSuffix(p, ".m3u") {
 		m.update(j, func(j *Job) { j.Kind = "http" })
 		d := &httpdl.Downloader{Client: m.client, Header: hdr, Workers: m.cfg.JobConnections, ChunkSize: m.cfg.ChunkSize}
 		dst := filepath.Join(work, "download")
-		res, err := d.Download(ctx, req.URL, dst, func(done, total int64) {
+		res, err := d.Download(ctx, src, dst, func(done, total int64) {
 			r.bytes.Store(done)
 			r.total.Store(total)
 		})
@@ -135,6 +167,7 @@ func (m *Manager) transfer(ctx context.Context, j *Job, r *run, work string, hdr
 					path:  dst,
 					names: []string{res.Filename, path.Base(res.FinalURL.Path)},
 					ctype: ctype,
+					final: res.FinalURL,
 				}, nil
 			}
 		}
@@ -142,13 +175,13 @@ func (m *Manager) transfer(ctx context.Context, j *Job, r *run, work string, hdr
 		r.bytes.Store(0)
 		r.total.Store(0)
 	}
-	return m.transferHLS(ctx, j, r, work, hdr)
+	return m.transferHLS(ctx, j, r, work, hdr, src)
 }
 
-func (m *Manager) transferHLS(ctx context.Context, j *Job, r *run, work string, hdr http.Header) (*download, error) {
+func (m *Manager) transferHLS(ctx context.Context, j *Job, r *run, work string, hdr http.Header, src string) (*download, error) {
 	req := j.Request
 	m.update(j, func(j *Job) { j.Kind = "hls" })
-	plan, err := hls.Load(ctx, m.client, hdr, req.URL, req.Upgrade == nil || *req.Upgrade)
+	plan, err := hls.Load(ctx, m.client, hdr, src, req.Upgrade == nil || *req.Upgrade)
 	if err != nil {
 		return nil, err
 	}
@@ -205,11 +238,11 @@ func (m *Manager) transferHLS(ctx context.Context, j *Job, r *run, work string, 
 	for _, in := range inputs {
 		os.Remove(in)
 	}
-	src, _ := url.Parse(plan.Source)
+	pu, _ := url.Parse(plan.Source)
 	return &download{
 		path:     out,
 		isHLS:    true,
-		names:    []string{path.Base(src.Path), path.Base(strings.TrimSuffix(path.Dir(src.Path), "/"))},
+		names:    []string{path.Base(pu.Path), path.Base(strings.TrimSuffix(path.Dir(pu.Path), "/"))},
 		ctype:    "video/mp4",
 		expected: media.Expect{Duration: plan.Video.Duration, Height: plan.Height},
 	}, nil
@@ -343,38 +376,119 @@ func buildHeader(req Request) http.Header {
 	return h
 }
 
-var (
-	metaTitleRe = regexp.MustCompile(`(?is)<meta\s[^>]*(?:property|name)\s*=\s*["'](?:og:title|twitter:title)["'][^>]*>`)
-	contentRe   = regexp.MustCompile(`(?is)content\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-	titleRe     = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
-)
+// webPage is a fetched HTML page and the URL it came from after redirects.
+type webPage struct {
+	data []byte
+	url  *url.URL
+}
 
-// pageTitle reads og:title (or <title>) from a web page.
-func pageTitle(ctx context.Context, m *Manager, pageURL string, hdr http.Header) (string, error) {
+const maxPage = 4 << 20
+
+// fetchPage reads a web page the way a browser opening it would: without the
+// Referer and Origin meant for the media requests.
+func (m *Manager) fetchPage(ctx context.Context, pageURL string, hdr http.Header) (*webPage, error) {
 	h := hdr.Clone()
 	h.Del("Origin")
 	h.Del("Referer")
-	data, _, err := m.client.Fetch(ctx, pageURL, h, 4<<20)
+	data, final, err := m.client.Fetch(ctx, pageURL, h, maxPage)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if tag := metaTitleRe.Find(data); tag != nil {
-		if c := contentRe.FindSubmatch(tag); c != nil {
-			if t := strings.TrimSpace(html.UnescapeString(string(c[1]) + string(c[2]))); t != "" {
-				return t, nil
+	return &webPage{data, final}, nil
+}
+
+// readPage loads a downloaded file that turned out to be a web page.
+func readPage(dl *download) (*webPage, error) {
+	f, err := os.Open(dl.path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxPage))
+	return &webPage{data, dl.final}, err
+}
+
+// pick chooses the video to download from the URLs the bookmarklet saw in the
+// browser and those in the page's HTML. When the page has none, it looks in
+// up to three iframes (embedded players). It returns the URL and the page it
+// was found on, which becomes the Referer.
+func (m *Manager) pick(ctx context.Context, j *Job, browser []string, pg *webPage, hdr http.Header) (string, string, error) {
+	type cand struct{ url, ref string }
+	var list []cand
+	add := func(urls []string, ref string) {
+		for _, u := range urls {
+			list = append(list, cand{u, ref})
+		}
+	}
+	add(page.Clean(browser, nil), "")
+	if pg != nil {
+		add(page.Find(pg.data, pg.url), "")
+		if len(list) == 0 {
+			frames := page.Iframes(pg.data, pg.url)
+			for _, f := range frames[:min(len(frames), 3)] {
+				h := hdr.Clone()
+				h.Set("Referer", pg.url.String())
+				h.Del("Origin")
+				data, final, err := m.client.Fetch(ctx, f, h, maxPage)
+				if err != nil {
+					m.note(j, "could not read embedded player %s: %v", f, err)
+					continue
+				}
+				add(page.Find(data, final), final.String())
 			}
 		}
 	}
-	if t := titleRe.FindSubmatch(data); t != nil {
-		return strings.TrimSpace(html.UnescapeString(string(t[1]))), nil
+	if len(list) == 0 {
+		return "", "", errors.New("no video or playlist found on the page (the player may build its URL in JavaScript: use the bookmarklet while the video plays, or paste the .m3u8 link)")
 	}
-	return "", errors.New("no title found")
+	ref := map[string]string{}
+	var urls []string
+	for _, c := range list {
+		if _, ok := ref[c.url]; !ok {
+			ref[c.url] = c.ref
+			urls = append(urls, c.url)
+		}
+	}
+	urls = page.Best(urls)
+	m.update(j, func(j *Job) { j.Found = urls[0] })
+	m.note(j, "found on page: %s", urls[0])
+	if n := len(urls) - 1; n > 0 {
+		m.note(j, "%d other candidate(s), use Retry with new URL to pick one: %s", n, strings.Join(urls[1:min(len(urls), 4)], " "))
+	}
+	return urls[0], ref[urls[0]], nil
+}
+
+// withReferer makes ref the Referer and Origin unless the user set them.
+func withReferer(req Request, hdr http.Header, ref string) http.Header {
+	if ref == "" {
+		return hdr
+	}
+	user := buildHeader(Request{Headers: req.Headers})
+	h := hdr.Clone()
+	if user.Get("Referer") == "" {
+		h.Set("Referer", ref)
+	}
+	if p, err := url.Parse(ref); err == nil && user.Get("Origin") == "" {
+		h.Set("Origin", p.Scheme+"://"+p.Host)
+	}
+	return h
+}
+
+// looksLikeMedia reports whether a URL names a playlist or media file, so a
+// web page in its place is an error rather than something to search.
+func looksLikeMedia(u string) bool {
+	p, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(p.Path))
+	return ext == ".m3u8" || ext == ".m3u" || media.IsMediaExt(ext)
 }
 
 func (m *Manager) sendNotify(j Job) {
 	name := filepath.Base(j.Output)
 	if name == "." || name == "" {
-		name = j.URL
+		name = cmp.Or(j.Found, j.URL, j.PageURL)
 	}
 	var title, msg string
 	switch j.State {
@@ -387,7 +501,7 @@ func (m *Manager) sendNotify(j Job) {
 	case Duplicate:
 		title, msg = "trawl: duplicate", fmt.Sprintf("already have %s (open trawl to keep a copy anyway)", filepath.Base(j.DupOf))
 	default:
-		title, msg = "trawl: failed", fmt.Sprintf("%s: %s", j.URL, j.Error)
+		title, msg = "trawl: failed", fmt.Sprintf("%s: %s", cmp.Or(j.URL, j.PageURL), j.Error)
 	}
 	if err := notify.Send(m.ctx, m.cfg.NotifyURL, title, msg); err != nil {
 		m.log.Warn("notify", "err", err)

@@ -49,6 +49,9 @@ type Request struct {
 	Verify  string `json:"verify,omitempty"`  // overrides TRAWL_VERIFY
 	Upgrade *bool  `json:"upgrade,omitempty"` // look for better HLS quality, default true
 	Dedupe  string `json:"dedupe,omitempty"`  // overrides TRAWL_DEDUPE: skip | keep | off
+	// Candidates are video and playlist URLs the bookmarklet saw the browser
+	// load. With URL empty, trawl picks the best of these and the page's own.
+	Candidates []string `json:"candidates,omitempty"`
 }
 
 // Job is a request plus its progress and result.
@@ -56,7 +59,8 @@ type Job struct {
 	ID string `json:"id"`
 	Request
 	State    State       `json:"state"`
-	Kind     string      `json:"kind,omitempty"` // hls | http
+	Kind     string      `json:"kind,omitempty"`      // hls | http
+	Found    string      `json:"found_url,omitempty"` // picked from the page when URL was empty
 	Error    string      `json:"error,omitempty"`
 	Notes    []string    `json:"notes,omitempty"`
 	Created  time.Time   `json:"created"`
@@ -153,14 +157,17 @@ func (m *Manager) Wait() {
 
 // Add validates and queues a request.
 func (m *Manager) Add(req Request) (Job, error) {
-	u, err := url.Parse(req.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if req.URL == "" && req.PageURL == "" {
+		return Job{}, errors.New("url or page_url is required")
+	}
+	if req.URL != "" && !isHTTP(req.URL) {
 		return Job{}, errors.New("url must be an http(s) URL")
 	}
-	if req.PageURL != "" {
-		if p, err := url.Parse(req.PageURL); err != nil || (p.Scheme != "http" && p.Scheme != "https") {
-			return Job{}, errors.New("page_url must be an http(s) URL")
-		}
+	if req.PageURL != "" && !isHTTP(req.PageURL) {
+		return Job{}, errors.New("page_url must be an http(s) URL")
+	}
+	if len(req.Candidates) > 50 {
+		req.Candidates = req.Candidates[:50]
 	}
 	if _, ok := m.cfg.Folder(req.Folder); !ok {
 		return Job{}, fmt.Errorf("unknown folder %q", req.Folder)
@@ -180,6 +187,11 @@ func (m *Manager) Add(req Request) (Job, error) {
 	m.saveLocked()
 	m.wakeLocked()
 	return *j, nil
+}
+
+func isHTTP(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // List returns a snapshot of all jobs, newest first.
@@ -222,7 +234,7 @@ func (m *Manager) Cancel(id string) error {
 // Retry queues a finished job again, optionally with a fresh URL.
 func (m *Manager) Retry(id, newURL string) error {
 	if newURL != "" {
-		if u, err := url.Parse(newURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		if !isHTTP(newURL) {
 			return errors.New("url must be an http(s) URL")
 		}
 	}
