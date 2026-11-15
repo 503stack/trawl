@@ -36,7 +36,7 @@ The container runs as uid/gid 1000, so the mounted folders must be writable by t
 
 Open http://localhost:8080. Paste one or more URLs, optionally with the page they came from, and press Download.
 
-Use the **bookmarklet** link in the UI on a video page, preferably once the video is playing. It opens trawl with the page URL and title filled in, together with the playlists and video files the browser has loaded. Press Download with the URL field empty and trawl picks the best one. This also finds streams that the player builds in JavaScript, which a scan of the HTML would miss.
+Use the **bookmarklet** link in the UI on a video page, preferably once the video is playing. It opens trawl in a new tab with the page URL and title filled in, together with the playlists and video files the browser has loaded. Press Download with the URL field empty and trawl picks the best one. This also finds streams that the player builds in JavaScript, which a scan of the HTML would miss.
 
 ### API
 

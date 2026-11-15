@@ -105,7 +105,8 @@ if (qs.toString()) history.replaceState(null, '', location.pathname);
 
 // The bookmarklet runs on the video page. It collects the playlists and files
 // the player loaded (performance entries) and the <video> sources, so URLs
-// built in JavaScript are found too, then opens trawl with them.
+// built in JavaScript are found too, then opens trawl with them in a new tab
+// (or in this one if pop-ups are blocked), so the video page stays open.
 function bookmarklet(target) {
   const media = /\.(m3u8|mp4|m4v|webm|mov|mkv)$/i, lists = [], files = [];
   const add = s => {
@@ -120,7 +121,8 @@ function bookmarklet(target) {
   document.querySelectorAll('video, video source').forEach(v => { add(v.currentSrc || ''); add(v.src || ''); });
   let q = '?page=' + encodeURIComponent(location.href) + '&title=' + encodeURIComponent(document.title);
   lists.concat(files).slice(0, 20).forEach(u => q += '&cand=' + encodeURIComponent(u));
-  location.href = target + q;
+  const w = window.open(target + q, '_blank');
+  if (!w) location.href = target + q;
 }
 $('#bm').href = 'javascript:' + encodeURIComponent(`(${bookmarklet})(${JSON.stringify(location.origin + location.pathname)})`);
 
