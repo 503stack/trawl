@@ -1,3 +1,5 @@
+<img src=".github/logo.svg" alt="trawl" width="200">
+
 # trawl
 
 A small self-hosted downloader for **HLS streams (`.m3u8`)** and **plain files**, built to fill a fast line.

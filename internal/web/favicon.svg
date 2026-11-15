@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="96 40 750 750">
+  <defs>
+    <linearGradient id="net" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00e7c1"/>
+      <stop offset="1" stop-color="#00dabb"/>
+    </linearGradient>
+    <linearGradient id="speed" gradientUnits="userSpaceOnUse" x1="126" y1="0" x2="432" y2="0">
+      <stop offset="0" stop-color="#168fff"/>
+      <stop offset="1" stop-color="#00e4cf"/>
+    </linearGradient>
+    <clipPath id="netClip"><path d="M 366 414 C 467 523 646 554 818 467 C 803 593 704 668 590 663 C 486 658 410 574 366 414 Z"/></clipPath>
+  </defs>
+  <rect x="96" y="40" width="750" height="750" rx="165" fill="#050b25"/>
+  <!-- Forward motion -->
+  <g fill="none" stroke="url(#speed)" stroke-width="21" stroke-linecap="round">
+    <path d="M 126 415 H 175"/><path d="M 204 415 H 360"/>
+    <path d="M 168 483 H 231"/><path d="M 265 483 H 393"/>
+    <path d="M 234 550 H 282"/><path d="M 320 550 H 432"/>
+  </g>
+  <!-- Top suspension ring -->
+  <circle cx="259" cy="155" r="34" fill="none" stroke="url(#net)" stroke-width="21"/>
+  <g fill="none" stroke="url(#net)" stroke-width="21" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M 271 190 C 291 279 325 381 366 414"/>
+    <path d="M 282 192 C 362 276 432 325 505 361"/>
+    <path d="M 285 196 C 351 323 408 371 459 392"/>
+    <path d="M 366 414 C 467 523 646 554 818 467 C 803 593 704 668 590 663 C 486 658 410 574 366 414 Z"/>
+  </g>
+  <!-- Mesh contained within the net -->
+  <g clip-path="url(#netClip)" stroke="url(#net)" stroke-width="17" fill="none" stroke-linecap="round">
+    <path d="M 393 422 C 438 495 483 574 596 684"/>
+    <path d="M 474 467 C 503 542 553 613 670 694"/>
+    <path d="M 574 508 C 583 573 629 639 729 674"/>
+    <path d="M 682 514 C 688 571 696 613 723 662"/>
+    <path d="M 781 489 C 773 541 757 585 728 621"/>
+    <path d="M 383 480 C 510 585 668 616 801 551"/>
+    <path d="M 412 545 C 535 636 660 655 763 609"/>
+  </g>
+  <!-- Captured media tile -->
+  <g transform="rotate(-11 612 402)">
+    <path d="M 492 447 V 350 Q 492 319 522 319 H 675 Q 705 319 705 350 V 447" fill="#050b25" stroke="#ffffff" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 585 367 Q 585 355 597 362 L 648 399 Q 657 406 648 413 L 597 449 Q 585 456 585 441 Z" fill="#ffffff"/>
+  </g>
+  <!-- Net lip goes over the media tile -->
+  <path d="M 366 414 C 467 523 646 554 818 467" fill="none" stroke="url(#net)" stroke-width="21" stroke-linecap="round"/>
+</svg>

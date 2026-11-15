@@ -4,13 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>trawl</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#6b7280; --line:#e3e6eb; --accent:#2563eb; --ok:#15803d; --bad:#b91c1c; --warn:#b45309; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0f1218; --card:#171b23; --fg:#e6e8ec; --muted:#9aa3b2; --line:#2a303b; --accent:#5b8cff; --ok:#4ade80; --bad:#f87171; --warn:#fbbf24; } }
   * { box-sizing: border-box; }
   body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
   main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
-  h1 { font-size: 20px; margin: 0 0 16px; display:flex; align-items:baseline; gap:12px; }
+  h1 { font-size: 20px; margin: 0 0 16px; display:flex; align-items:center; gap:10px; }
+  h1 img { width: 30px; height: 30px; }
   h1 small { font-weight: 400; color: var(--muted); font-size: 13px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
   label { display:block; font-size:12px; color:var(--muted); margin: 8px 0 3px; }
@@ -44,7 +47,7 @@
 </head>
 <body>
 <main>
-  <h1>trawl <small>parallel downloads for files and HLS streams</small></h1>
+  <h1><img src="favicon.svg" alt="">trawl <small>parallel downloads for files and HLS streams</small></h1>
 
   <form class="card" id="form">
     <label for="urls">URLs: .m3u8 playlists or direct files, one per line. Leave empty to find the video on the page URL.</label>

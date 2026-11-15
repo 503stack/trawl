@@ -15,6 +15,21 @@ import (
 //go:embed index.html
 var index []byte
 
+//go:embed favicon.svg
+var favicon []byte
+
+//go:embed apple-touch-icon.png
+var touchIcon []byte
+
+// asset serves an embedded file that only changes with a new release.
+func asset(ctype string, data []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", ctype)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(data)
+	}
+}
+
 // Handler returns the HTTP handler for the UI and API.
 func Handler(m *queue.Manager, cfg *config.Config) http.Handler {
 	mux := http.NewServeMux()
@@ -22,6 +37,8 @@ func Handler(m *queue.Manager, cfg *config.Config) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(index)
 	})
+	mux.HandleFunc("GET /favicon.svg", asset("image/svg+xml", favicon))
+	mux.HandleFunc("GET /apple-touch-icon.png", asset("image/png", touchIcon))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"folders": cfg.Folders, "verify": cfg.VerifyLevel, "dedupe": cfg.Dedupe})
