@@ -29,6 +29,9 @@ type Result struct {
 	Filename    string // from Content-Disposition
 	ContentType string
 	FinalURL    *url.URL
+	// Connections is how many parallel connections were left after the
+	// server turned the others away; 0 if it turned none away.
+	Connections int
 }
 
 // Downloader downloads one URL.
@@ -76,7 +79,8 @@ func (d *Downloader) Download(ctx context.Context, rawURL, dst string, prog func
 		body.Close()
 		d.Client.Release()
 		res.Size = total
-		return res, d.parallel(ctx, res.FinalURL.String(), dst, total, prog)
+		res.Connections, err = d.parallel(ctx, res.FinalURL.String(), dst, total, prog)
+		return res, err
 	}
 
 	defer d.Client.Release()
@@ -111,47 +115,87 @@ func (d *Downloader) Download(ctx context.Context, rawURL, dst string, prog func
 	return res, f.Close()
 }
 
-func (d *Downloader) parallel(ctx context.Context, u, dst string, total int64, prog func(done, total int64)) error {
+// span is a byte range still to fetch, inclusive.
+type span struct{ start, end int64 }
+
+// work is the queue of spans shared by the workers. A worker that the server
+// turns away (503, 429) while others are still running gives its remaining
+// span back and stops, so a job settles at the number of connections the
+// server allows. The last worker never stops this way; it retries instead.
+type work struct {
+	mu     sync.Mutex
+	queue  []span
+	active int
+	shed   int
+}
+
+func (w *work) pop() (span, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.queue) == 0 {
+		w.active--
+		return span{}, false
+	}
+	s := w.queue[0]
+	w.queue = w.queue[1:]
+	return s, true
+}
+
+// giveBack requeues s and retires the calling worker, unless it is the last.
+func (w *work) giveBack(s span) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.active <= 1 {
+		return false
+	}
+	w.active--
+	w.shed++
+	w.queue = append(w.queue, s)
+	return true
+}
+
+var errShed = errors.New("connection refused by server; span handed back")
+
+func (d *Downloader) parallel(ctx context.Context, u, dst string, total int64, prog func(done, total int64)) (int, error) {
 	f, err := os.Create(dst)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer f.Close()
 	if err := f.Truncate(total); err != nil {
-		return err
+		return 0, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	chunks := int((total + d.ChunkSize - 1) / d.ChunkSize)
-	idx := make(chan int)
-	go func() {
-		defer close(idx)
-		for i := range chunks {
-			select {
-			case idx <- i:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	w := &work{}
+	for start := int64(0); start < total; start += d.ChunkSize {
+		w.queue = append(w.queue, span{start, min(start+d.ChunkSize, total) - 1})
+	}
+	workers := min(d.Workers, len(w.queue))
+	w.active = workers
 	var (
 		done     atomic.Int64
 		wg       sync.WaitGroup
 		once     sync.Once
 		firstErr error
 	)
-	for range min(d.Workers, chunks) {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := range idx {
-				start := int64(i) * d.ChunkSize
-				end := min(start+d.ChunkSize, total) - 1
-				err := d.chunk(ctx, u, f, start, end, func(n int64) { prog(done.Add(n), total) })
+			for {
+				s, ok := w.pop()
+				if !ok {
+					return
+				}
+				err := d.chunk(ctx, u, f, s, w, func(n int64) { prog(done.Add(n), total) })
+				if errors.Is(err, errShed) {
+					return
+				}
 				if err != nil {
 					once.Do(func() {
-						firstErr = fmt.Errorf("bytes %d-%d: %w", start, end, err)
+						firstErr = fmt.Errorf("bytes %d-%d: %w", s.start, s.end, err)
 						cancel()
 					})
 					return
@@ -161,21 +205,25 @@ func (d *Downloader) parallel(ctx context.Context, u, dst string, total int64, p
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return firstErr
+		return 0, firstErr
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	if got := done.Load(); got != total {
-		return fmt.Errorf("incomplete: %d of %d bytes", got, total)
+		return 0, fmt.Errorf("incomplete: %d of %d bytes", got, total)
 	}
-	return f.Close()
+	if w.shed == 0 {
+		return 0, f.Close()
+	}
+	return workers - w.shed, f.Close()
 }
 
-// chunk downloads bytes start..end (inclusive), resuming from where it got to
-// on each retry.
-func (d *Downloader) chunk(ctx context.Context, u string, f *os.File, start, end int64, add func(int64)) error {
-	pos := start
+// chunk downloads span s, resuming from where it got to on each retry. When
+// the server refuses the connection (503, 429) and other workers are still
+// running, it hands the rest of the span back to w and returns errShed.
+func (d *Downloader) chunk(ctx context.Context, u string, f *os.File, s span, w *work, add func(int64)) error {
+	pos, end := s.start, s.end
 	buf := make([]byte, 256<<10)
 	return d.Client.Retry(ctx, func() error {
 		if err := d.Client.Acquire(ctx); err != nil {
@@ -184,6 +232,11 @@ func (d *Downloader) chunk(ctx context.Context, u string, f *os.File, start, end
 		defer d.Client.Release()
 		resp, body, err := d.Client.Get(ctx, u, d.Header, fmt.Sprintf("bytes=%d-%d", pos, end))
 		if err != nil {
+			var se *fetch.StatusError
+			if errors.As(err, &se) && (se.Code == http.StatusServiceUnavailable || se.Code == http.StatusTooManyRequests) &&
+				w.giveBack(span{pos, end}) {
+				return fetch.Permanent(errShed)
+			}
 			return err
 		}
 		defer body.Close()

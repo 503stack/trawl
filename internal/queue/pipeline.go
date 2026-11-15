@@ -160,6 +160,9 @@ func (m *Manager) transfer(ctx context.Context, j *Job, r *run, work string, hdr
 		if err != nil && !errors.Is(err, httpdl.ErrPlaylist) {
 			return nil, err
 		}
+		if err == nil && res.Connections > 0 {
+			m.note(j, "server allowed only %d parallel connection(s)", res.Connections)
+		}
 		if err == nil {
 			ctype, _ := media.Sniff(dst)
 			if ctype != "application/vnd.apple.mpegurl" {

@@ -3,7 +3,7 @@
 A small self-hosted downloader for **HLS streams (`.m3u8`)** and **plain files**, built to fill a fast line.
 It runs as one Go binary plus ffmpeg, with a single-page web UI, and needs no database.
 
-- **Parallel downloads.** HLS segments are fetched by up to 16 workers per job. Plain files are split into byte ranges fetched in parallel, and an interrupted range resumes where it stopped. A global cap limits connections across all jobs.
+- **Parallel downloads.** HLS segments are fetched by up to 16 workers per job. Plain files are split into byte ranges fetched in parallel, and an interrupted range resumes where it stopped. If the server refuses extra connections (503, 429), trawl drops to as many as it allows. A global cap limits connections across all jobs.
 - **HLS support.**
   - From a master playlist, trawl picks the best variant and adds its separate audio track.
   - Handles AES-128 encryption, fMP4 (`#EXT-X-MAP`) and byte-range playlists.
