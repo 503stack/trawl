@@ -253,6 +253,9 @@ func TestPageExtraction(t *testing.T) {
 	// Like sites whose player sets src from script: only hover previews in the HTML.
 	mux.Handle("/previews", page(`<title>Previews</title></head><body><video id="player" src=""></video>
 <video class="hover" src="/p/1/vidthumb.mp4"></video>`))
+	// A link in the description to a dead page on another host, ranked high by its name.
+	mux.Handle("/described", page(`<title>Described</title></head><body><video id="player" src=""></video>
+<a href="/v/gone/Movie_1080p.mp4">mirror</a>`))
 	mux.Handle("/cdn/abc.vid", file("/previews"))
 	e := setup(t, mux)
 	srvURL = e.srv.URL
@@ -291,8 +294,15 @@ func TestPageExtraction(t *testing.T) {
 	// The bookmarklet sends the playing <video>'s source whatever its extension.
 	req = base
 	req.PageURL = srvURL + "/previews"
-	req.Candidates = []string{srvURL + "/cdn/abc.vid", srvURL + "/p/1/vidthumb.mp4"}
+	req.Playing = []string{srvURL + "/p/1/vidthumb.mp4", srvURL + "/cdn/abc.vid"}
 	check("site .vid", req, "Previews.vid", srvURL+"/cdn/abc.vid")
+
+	// What the browser plays beats a higher-resolution name found on the page.
+	mux.Handle("/cdn/def.vid", file("/described"))
+	req = base
+	req.PageURL = srvURL + "/described"
+	req.Playing = []string{srvURL + "/cdn/def.vid"}
+	check("playing wins", req, "Described.vid", srvURL+"/cdn/def.vid")
 
 	req = base
 	req.PageURL = srvURL + "/previews"

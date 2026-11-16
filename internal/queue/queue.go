@@ -49,8 +49,13 @@ type Request struct {
 	Verify  string `json:"verify,omitempty"`  // overrides TRAWL_VERIFY
 	Upgrade *bool  `json:"upgrade,omitempty"` // look for better HLS quality, default true
 	Dedupe  string `json:"dedupe,omitempty"`  // overrides TRAWL_DEDUPE: skip | keep | off
-	// Candidates are video and playlist URLs the bookmarklet saw the browser
-	// load. With URL empty, trawl picks the best of these and the page's own.
+	// Playing are the sources of the <video> elements the bookmarklet found
+	// playing or visible, best first. With URL empty, the first that is not a
+	// preview is downloaded.
+	Playing []string `json:"playing,omitempty"`
+	// Candidates are other video and playlist URLs the browser loaded. With
+	// URL empty and nothing playing, trawl picks the best of these and the
+	// page's own.
 	Candidates []string `json:"candidates,omitempty"`
 }
 
@@ -166,9 +171,8 @@ func (m *Manager) Add(req Request) (Job, error) {
 	if req.PageURL != "" && !isHTTP(req.PageURL) {
 		return Job{}, errors.New("page_url must be an http(s) URL")
 	}
-	if len(req.Candidates) > 50 {
-		req.Candidates = req.Candidates[:50]
-	}
+	req.Playing = req.Playing[:min(len(req.Playing), 10)]
+	req.Candidates = req.Candidates[:min(len(req.Candidates), 50)]
 	if _, ok := m.cfg.Folder(req.Folder); !ok {
 		return Job{}, fmt.Errorf("unknown folder %q", req.Folder)
 	}

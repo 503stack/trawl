@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -61,7 +62,7 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 
 	src := req.URL
 	if src == "" {
-		u, ref, err := m.pick(ctx, j, req.Candidates, pg, hdr)
+		u, ref, err := m.pick(ctx, j, req.Playing, req.Candidates, pg, hdr)
 		if err != nil {
 			return err
 		}
@@ -77,7 +78,7 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 			if title == "" {
 				title = page.Title(p.data)
 			}
-			if u, ref, err := m.pick(ctx, j, nil, p, hdr); err == nil {
+			if u, ref, err := m.pick(ctx, j, nil, nil, p, hdr); err == nil {
 				os.Remove(dl.path)
 				r.bytes.Store(0)
 				r.total.Store(0)
@@ -415,7 +416,7 @@ func readPage(dl *download) (*webPage, error) {
 // browser and those in the page's HTML. When the page has none, it looks in
 // up to three iframes (embedded players). It returns the URL and the page it
 // was found on, which becomes the Referer.
-func (m *Manager) pick(ctx context.Context, j *Job, browser []string, pg *webPage, hdr http.Header) (string, string, error) {
+func (m *Manager) pick(ctx context.Context, j *Job, playing, browser []string, pg *webPage, hdr http.Header) (string, string, error) {
 	type cand struct{ url, ref string }
 	var list []cand
 	add := func(urls []string, ref string) {
@@ -423,6 +424,15 @@ func (m *Manager) pick(ctx context.Context, j *Job, browser []string, pg *webPag
 			list = append(list, cand{u, ref})
 		}
 	}
+	// What the browser was playing beats anything ranked by its URL.
+	var played string
+	for _, u := range page.Clean(playing, nil, true) {
+		if !page.IsExtra(u) {
+			played = u
+			break
+		}
+	}
+	add(page.Clean(playing, nil, true), "")
 	add(page.Clean(browser, nil, true), "")
 	if pg != nil {
 		add(page.Find(pg.data, pg.url), "")
@@ -453,11 +463,16 @@ func (m *Manager) pick(ctx context.Context, j *Job, browser []string, pg *webPag
 		}
 	}
 	urls = page.Best(urls)
+	how := "found on page"
+	if played != "" {
+		urls = append([]string{played}, slices.DeleteFunc(urls, func(u string) bool { return u == played })...)
+		how = "playing in the browser"
+	}
 	if page.IsExtra(urls[0]) {
 		return "", "", fmt.Errorf("only previews, trailers or ads found on the page (%s); press play and use the bookmarklet, or paste the video link", strings.Join(urls[:min(len(urls), 3)], " "))
 	}
 	m.update(j, func(j *Job) { j.Found = urls[0] })
-	m.note(j, "found on page: %s", urls[0])
+	m.note(j, "%s: %s", how, urls[0])
 	if n := len(urls) - 1; n > 0 {
 		m.note(j, "%d other candidate(s), use Retry with new URL to pick one: %s", n, strings.Join(urls[1:min(len(urls), 4)], " "))
 	}

@@ -67,7 +67,7 @@ curl -X POST localhost:8080/api/jobs -H 'Content-Type: application/json' -d '{
 | `POST /api/clear` | remove finished jobs |
 | `GET /healthz` | health check |
 
-`url` may be left out when `page_url` is set. trawl then picks the video from `candidates` (URLs seen in the browser) and the page itself, and records the choice in `found_url`. A plain retry searches the page again, which helps with expiring links.
+`url` may be left out when `page_url` is set. trawl then downloads the first of `playing` (sources of the `<video>` elements playing in the browser) that is not a preview, or else picks the best of `candidates` (other URLs the browser loaded) and the page's own links. The choice is recorded in `found_url`. A plain retry searches the page again, which helps with expiring links.
 
 Mutating requests must send `Content-Type: application/json`.
 
