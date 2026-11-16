@@ -126,3 +126,7 @@ Jobs survive restarts. A job that was running when trawl stopped starts again fr
 go test ./...   # the end-to-end tests need ffmpeg and skip without it
 go run .        # set TRAWL_DATA and TRAWL_FOLDERS to local paths
 ```
+
+## License
+
+[MIT](LICENSE)
