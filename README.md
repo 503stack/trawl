@@ -25,6 +25,8 @@ It runs as one Go binary plus ffmpeg, with a single-page web UI, and needs no da
 - **Duplicate detection.** A sha256 is computed for every file. A file identical to one already in the folder is held aside instead of saved. **Keep as copy** saves it under a new name instantly, with no re-download, and **Remove** deletes it.
 - **Optional.** Notifications to Discord or ntfy, and a basic-auth password.
 
+![trawl web UI](image/screenshot.png)
+
 ## Run
 
 ```sh
