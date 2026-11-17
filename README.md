@@ -10,7 +10,7 @@ It runs as one Go binary plus ffmpeg, with a single-page web UI, and needs no da
   - From a master playlist, trawl picks the best variant and adds its separate audio track.
   - Handles AES-128 encryption, fMP4 (`#EXT-X-MAP`) and byte-range playlists.
   - Given a quality-named link like `360p.m3u8`, it looks for a better sibling (`master.m3u8`, `1080p.m3u8`, …).
-- **Finds the video on a page.** Give only a page URL, or paste a page link as the URL, and trawl looks for `.m3u8` playlists and video files in it: `og:video`, `<video>`/`<source>`, JSON-LD and URLs inside scripts, then up to three embedded-player iframes. It picks a playlist over a file, prefers the highest resolution in the URL, and never picks previews, trailers or ads. The other candidates are listed in the job notes.
+- **Finds the video on a page.** Give only a page URL, or paste a page link as the URL, and trawl looks for `.m3u8` playlists and video files in it: `og:video`, `<video>`/`<source>`, JSON-LD and URLs inside scripts, then up to three embedded-player iframes. It picks a playlist over a file, prefers the highest resolution in the URL, and never picks previews, trailers or ads. A file named in a query value counts too (`remote_control.php?file=x.mp4`). If the server refuses the pick (401, 403, 404, 410), trawl tries the next candidate, up to three. The other candidates are listed in the job notes.
 - **Per-job headers.** A page URL becomes the `Referer` and `Origin` headers. You can add any other headers (Cookie, User-Agent, …).
 - **File names.**
   - The name comes from, in order: the name you typed, the page title (`og:title` / `<title>`), `Content-Disposition`, or the URL. Meaningless names like `360p`, `index` or random tokens are skipped.
@@ -67,7 +67,7 @@ curl -X POST localhost:8080/api/jobs -H 'Content-Type: application/json' -d '{
 | `POST /api/clear` | remove finished jobs |
 | `GET /healthz` | health check |
 
-`url` may be left out when `page_url` is set. trawl then downloads the first of `playing` (sources of the `<video>` elements playing in the browser) that is not a preview, or else picks the best of `candidates` (other URLs the browser loaded) and the page's own links. The choice is recorded in `found_url`. A plain retry searches the page again, which helps with expiring links.
+`url` may be left out when `page_url` is set. trawl then downloads the first of `playing` (sources of the `<video>` elements playing in the browser) that is not a preview, or else picks the best of `candidates` (other URLs the browser loaded) and the page's own links. If the server refuses it, the next candidate is tried, up to three. The choice is recorded in `found_url`. A plain retry searches the page again, which helps with expiring links.
 
 Mutating requests must send `Content-Type: application/json`.
 

@@ -117,8 +117,10 @@ function bookmarklet(target) {
   const add = (s, any) => {
     try {
       const u = new URL(s, location.href);
-      if (!/^https?:$/.test(u.protocol) || !(any || media.test(u.pathname))) return;
-      const to = any ? vids : /\.m3u8$/i.test(u.pathname) ? lists : files;
+      // CDNs may name the file in a query value: remote_control.php?file=x.mp4
+      const name = media.test(u.pathname) ? u.pathname : [...u.searchParams.values()].find(v => media.test(v)) || '';
+      if (!/^https?:$/.test(u.protocol) || !(any || name)) return;
+      const to = any ? vids : /\.m3u8$/i.test(name) ? lists : files;
       if (!vids.includes(u.href) && !to.includes(u.href)) to.push(u.href);
     } catch (e) {}
   };

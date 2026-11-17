@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/503stack/trawl/internal/fetch"
 	"github.com/503stack/trawl/internal/hls"
 	"github.com/503stack/trawl/internal/httpdl"
 	"github.com/503stack/trawl/internal/media"
@@ -60,16 +61,19 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 		}
 	}
 
-	src := req.URL
-	if src == "" {
-		u, ref, err := m.pick(ctx, j, req.Playing, req.Candidates, pg, hdr)
+	var (
+		dl  *download
+		err error
+	)
+	if req.URL == "" {
+		cands, err := m.pick(ctx, j, req.Playing, req.Candidates, pg, hdr)
 		if err != nil {
 			return err
 		}
-		src, hdr = u, withReferer(req, hdr, ref)
-	}
-	dl, err := m.transfer(ctx, j, r, work, hdr, src)
-	if err != nil {
+		if dl, err = m.transferFirst(ctx, j, r, work, req, hdr, cands); err != nil {
+			return err
+		}
+	} else if dl, err = m.transfer(ctx, j, r, work, hdr, req.URL); err != nil {
 		return err
 	}
 	// The link was a web page rather than a file: look for the video in it.
@@ -78,7 +82,7 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 			if title == "" {
 				title = page.Title(p.data)
 			}
-			if u, ref, err := m.pick(ctx, j, nil, nil, p, hdr); err == nil {
+			if cands, err := m.pick(ctx, j, nil, nil, p, hdr); err == nil {
 				os.Remove(dl.path)
 				r.bytes.Store(0)
 				r.total.Store(0)
@@ -86,7 +90,7 @@ func (m *Manager) pipeline(ctx context.Context, j *Job, r *run) error {
 				if req.PageURL == "" {
 					h = withReferer(req, hdr, req.URL)
 				}
-				if dl, err = m.transfer(ctx, j, r, work, withReferer(req, h, ref), u); err != nil {
+				if dl, err = m.transferFirst(ctx, j, r, work, req, h, cands); err != nil {
 					return err
 				}
 			}
@@ -169,7 +173,7 @@ func (m *Manager) transfer(ctx context.Context, j *Job, r *run, work string, hdr
 			if ctype != "application/vnd.apple.mpegurl" {
 				return &download{
 					path:  dst,
-					names: []string{res.Filename, path.Base(res.FinalURL.Path)},
+					names: []string{res.Filename, page.Name(res.FinalURL)},
 					ctype: ctype,
 					final: res.FinalURL,
 				}, nil
@@ -412,12 +416,42 @@ func readPage(dl *download) (*webPage, error) {
 	return &webPage{data, dl.final}, err
 }
 
-// pick chooses the video to download from the URLs the bookmarklet saw in the
-// browser and those in the page's HTML. When the page has none, it looks in
-// up to three iframes (embedded players). It returns the URL and the page it
-// was found on, which becomes the Referer.
-func (m *Manager) pick(ctx context.Context, j *Job, playing, browser []string, pg *webPage, hdr http.Header) (string, string, error) {
-	type cand struct{ url, ref string }
+// cand is a video URL and the page it was found on, which becomes the Referer.
+type cand struct{ url, ref string }
+
+// maxTries is how many candidates a job tries when the server refuses one.
+const maxTries = 3
+
+// transferFirst downloads the first candidate the server lets through. A
+// refused link (401, 403, 404, 410) moves on to the next one: the URL the
+// browser played can sit behind bot protection that its CDN link does not.
+func (m *Manager) transferFirst(ctx context.Context, j *Job, r *run, work string, req Request, hdr http.Header, cands []cand) (*download, error) {
+	var err error
+	for i, c := range cands {
+		if i > 0 {
+			m.note(j, "trying the next candidate: %s", c.url)
+			m.update(j, func(j *Job) { j.Found = c.url })
+			r.bytes.Store(0)
+			r.total.Store(0)
+		}
+		var dl *download
+		dl, err = m.transfer(ctx, j, r, work, withReferer(req, hdr, c.ref), c.url)
+		var se *fetch.StatusError
+		if err == nil || ctx.Err() != nil || !errors.As(err, &se) || !slices.Contains([]int{401, 403, 404, 410}, se.Code) {
+			return dl, err
+		}
+		if i+1 < len(cands) {
+			m.note(j, "%s: %v", c.url, err)
+		}
+	}
+	return nil, err
+}
+
+// pick chooses the videos to download, best first, from the URLs the
+// bookmarklet saw in the browser and those in the page's HTML. When the page
+// has none, it looks in up to three iframes (embedded players). It returns up
+// to maxTries candidates, none of them previews or ads.
+func (m *Manager) pick(ctx context.Context, j *Job, playing, browser []string, pg *webPage, hdr http.Header) ([]cand, error) {
 	var list []cand
 	add := func(urls []string, ref string) {
 		for _, u := range urls {
@@ -452,7 +486,7 @@ func (m *Manager) pick(ctx context.Context, j *Job, playing, browser []string, p
 		}
 	}
 	if len(list) == 0 {
-		return "", "", errors.New("no video or playlist found on the page (the player may build its URL in JavaScript: use the bookmarklet while the video plays, or paste the .m3u8 link)")
+		return nil, errors.New("no video or playlist found on the page (the player may build its URL in JavaScript: use the bookmarklet while the video plays, or paste the .m3u8 link)")
 	}
 	ref := map[string]string{}
 	var urls []string
@@ -469,14 +503,21 @@ func (m *Manager) pick(ctx context.Context, j *Job, playing, browser []string, p
 		how = "playing in the browser"
 	}
 	if page.IsExtra(urls[0]) {
-		return "", "", fmt.Errorf("only previews, trailers or ads found on the page (%s); press play and use the bookmarklet, or paste the video link", strings.Join(urls[:min(len(urls), 3)], " "))
+		return nil, fmt.Errorf("only previews, trailers or ads found on the page (%s); press play and use the bookmarklet, or paste the video link", strings.Join(urls[:min(len(urls), 3)], " "))
 	}
 	m.update(j, func(j *Job) { j.Found = urls[0] })
 	m.note(j, "%s: %s", how, urls[0])
 	if n := len(urls) - 1; n > 0 {
 		m.note(j, "%d other candidate(s), use Retry with new URL to pick one: %s", n, strings.Join(urls[1:min(len(urls), 4)], " "))
 	}
-	return urls[0], ref[urls[0]], nil
+	var out []cand
+	for _, u := range urls {
+		if len(out) == maxTries || page.IsExtra(u) {
+			break
+		}
+		out = append(out, cand{u, ref[u]})
+	}
+	return out, nil
 }
 
 // withReferer makes ref the Referer and Origin unless the user set them.

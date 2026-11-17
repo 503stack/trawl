@@ -83,6 +83,16 @@ func TestCleanAnyExt(t *testing.T) {
 	if got := Clean(raw, nil, true); !slices.Equal(got, raw[:2]) {
 		t.Errorf("Clean any = %q", got)
 	}
+	cdn := []string{"https://cdn.example/remote_control.php?file=abc.mp4&acctoken=x", "https://cdn.example/get.php?id=1"}
+	if got := Clean(cdn, nil, false); !slices.Equal(got, cdn[:1]) {
+		t.Errorf("Clean query ext = %q", got)
+	}
+	for in, want := range map[string]string{cdn[0]: "abc.mp4", cdn[1]: "get.php", "https://c.example/v/a.mp4?file=b.mp4": "a.mp4"} {
+		u, _ := url.Parse(in)
+		if got := Name(u); got != want {
+			t.Errorf("Name(%s) = %q, want %q", in, got, want)
+		}
+	}
 	if !IsExtra("https://c.example/p/vidthumb.mp4") || IsExtra("https://c.example/cdn/x.vid") {
 		t.Error("IsExtra")
 	}

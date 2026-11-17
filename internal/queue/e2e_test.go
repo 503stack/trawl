@@ -304,6 +304,19 @@ func TestPageExtraction(t *testing.T) {
 	req.Playing = []string{srvURL + "/cdn/def.vid"}
 	check("playing wins", req, "Described.vid", srvURL+"/cdn/def.vid")
 
+	// The playing URL sits behind bot protection; the CDN link it redirects to,
+	// named by a query value, does not.
+	mux.HandleFunc("/get_file/1/x.mp4/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "blocked", http.StatusForbidden)
+	})
+	mux.Handle("/cdn/remote_control.php", file("/blocked"))
+	mux.Handle("/blocked", page(`<title>Blocked</title></head><body><video id="player" src=""></video>`))
+	req = base
+	req.PageURL = srvURL + "/blocked"
+	req.Playing = []string{srvURL + "/get_file/1/x.mp4/?tok=1"}
+	req.Candidates = []string{srvURL + "/cdn/remote_control.php?file=abc.mp4&acctoken=t"}
+	check("refused, next candidate", req, "Blocked.mp4", srvURL+"/cdn/remote_control.php?file=abc.mp4&acctoken=t")
+
 	req = base
 	req.PageURL = srvURL + "/previews"
 	j := e.run(t, req)

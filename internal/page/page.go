@@ -139,13 +139,44 @@ func IsExtra(u string) bool {
 	return err == nil && extraRe.MatchString(p.Path)
 }
 
-// kind is 2 for an HLS playlist, 1 for a video file, 0 otherwise.
+// kind is 2 for an HLS playlist, 1 for a video file, 0 otherwise. Besides the
+// path, it looks at query values, for CDNs that serve files from a script
+// (remote_control.php?file=….mp4).
 func kind(u string) int {
 	p, err := url.Parse(u)
 	if err != nil {
 		return 0
 	}
-	switch strings.ToLower(path.Ext(p.Path)) {
+	if k := extKind(p.Path); k > 0 {
+		return k
+	}
+	for _, vs := range p.Query() {
+		for _, v := range vs {
+			if k := extKind(v); k > 0 {
+				return k
+			}
+		}
+	}
+	return 0
+}
+
+// Name returns the file name in a video URL: the last path element, or the
+// query value that names the file (remote_control.php?file=x.mp4 → x.mp4).
+func Name(u *url.URL) string {
+	if extKind(u.Path) == 0 {
+		for _, vs := range u.Query() {
+			for _, v := range vs {
+				if extKind(v) > 0 {
+					return path.Base(v)
+				}
+			}
+		}
+	}
+	return path.Base(u.Path)
+}
+
+func extKind(s string) int {
+	switch strings.ToLower(path.Ext(s)) {
 	case ".m3u8":
 		return 2
 	case ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".vid":
